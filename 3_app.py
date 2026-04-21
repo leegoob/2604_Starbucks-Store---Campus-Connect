@@ -1586,7 +1586,10 @@ def kakao_map_html(
     key = html.escape(app_key, quote=True)
     sc = str(show_school_captions).lower()
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"/></head>
+<html><head>
+<meta charset="utf-8"/>
+<meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"/>
+</head>
 <body style="margin:0;font-family:{FONT_STACK_HTML};">
 <div id="map" style="width:100%;height:{map_height_px}px;"></div>
 <p id="map-err" style="display:none;margin:0;padding:10px 12px;font-size:13px;line-height:1.45;color:#b71c1c;background:#ffebee;border:1px solid #e57373;"></p>
