@@ -1,0 +1,92 @@
+================================================================================
+  엑셀 파일 넣는 위치 / 파일 이름 / 시트 / 열 이름 (최종 버전 기준)
+================================================================================
+
+[어디에 넣나요 = "업로드" 방법]
+  이 프로그램은 웹에 파일을 올리는 방식이 아닙니다.
+  아래 폴더에 엑셀 파일을 "복사해서 넣어" 두면 됩니다.
+
+  폴더 경로:
+    c:\Users\USER\Desktop\starbucks_school_finder
+
+  (회사 노트북이면 이 폴더 전체를 복사한 뒤, 같은 이름으로 두 파일을 넣으세요.)
+
+
+[파일 이름 (반드시 이 이름)]
+  스타벅스 매장 정보  →  stores.xlsx
+  전국 학교 정보      →  schools.xlsx
+
+  ※ 확장자는 .xlsx (엑셀 통합 문서) 입니다.
+
+
+[시트(탭) 규칙]
+  기본 설정:  맨 왼쪽 "첫 번째 시트"만 읽습니다.
+  (다른 시트 이름을 쓰고 싶으면 import_excel_to_csv.py 안의
+   STORE_SHEET, SCHOOL_SHEET 을 시트 이름 문자열로 바꿉니다. 예: "데이터")
+
+
+[1행(헤더) = 열 이름]
+  반드시 1행에 아래 열 이름이 있어야 합니다. (띄어쓰기까지 동일하게 맞추세요.)
+
+  ■ stores.xlsx (매장)
+      매장명     ← 매장 이름 (예: 스타벅스 OO점)
+      주소       ← 도로명주소 또는 지번주소 (지오코딩에 쓰임)
+
+  ■ stores.xlsx (선택 — 필수 열 오른쪽에 추가 가능, 나중에 채워도 됨)
+      운영팀     ← 예: 운영 1팀 ~ 운영 13팀 등
+      권역       ← 권역 이름 또는 코드 (팀에서 쓰는 표현 그대로)
+
+  ■ schools.xlsx (학교)
+      학교명     ← 학교 이름
+      학교구분   ← 예: 고등학교 / 대학교 / 전문대학교 (한 셀에 하나)
+      주소       ← 도로명주소 또는 지번주소
+
+  ■ schools.xlsx (선택 — 필수 열 오른쪽에 추가 가능, 비워도 됨)
+      담당부서   ← 취업·진로 등 연락 부서명 (부서명·취업진로부서 열 이름도 같은 의미로 인식)
+      담당자명
+      전화번호
+      이메일
+
+
+[데이터가 시작되는 행]
+  2행부터 본문 데이터입니다. (1행은 헤더만)
+
+
+[열 이름이 우리가 정한 것과 다를 때]
+  import_excel_to_csv.py 파일을 열고
+  STORE_RENAME, SCHOOL_RENAME 을 본인 엑셀 헤더에 맞게 수정합니다.
+  (왼쪽: 엑셀에 적힌 열 이름, 오른쪽: 바꾸면 안 되는 내부 이름 name, address 등)
+
+
+[당신이 할 일 순서]
+  1) stores.xlsx, schools.xlsx 를 위 폴더에 넣는다.
+  2) 터미널에서:
+       python import_excel_to_csv.py
+       python 2_geocode.py
+     ※ 처음이거나 학교 목록/주소를 바꿀 때: 위처럼 전체 실행.
+     ※ 매장(stores.xlsx)만 바꾸고 학교는 그대로일 때 (이미 processed_data.csv 가 있을 때):
+       python import_excel_to_csv.py
+       python 2_geocode.py --stores-only
+       → 학교는 다시 지오코딩하지 않아 시간이 훨씬 짧습니다.
+     ※ 학교(schools.xlsx)만 먼저 반영하고 매장은 나중에 할 때:
+       python import_excel_to_csv.py
+       python 2_geocode.py --schools-only
+       (빠른 화면 테스트: python 2_geocode.py --schools-only --limit 150 --pause 1.5)
+       → 기존 processed_data.csv 의 매장 행은 그대로 두고 학교만 다시 지오코딩합니다.
+
+     ※ 학교 수천 건을 빠르게 넣을 때 (카카오 REST API 키 필요, Nominatim보다 훨씬 빠름):
+       .streamlit/secrets.toml 에 kakao_rest_api_key 를 넣거나 KAKAO_REST_API_KEY 환경변수 설정
+       python import_excel_to_csv.py
+       python 2_geocode_kakao_schools.py
+       → 매장 행은 유지하고 raw_schools.csv 학교만 주소→좌표로 채웁니다.
+  3) 카카오 JavaScript 키 준비 (지도용)
+  4) 터미널에서:
+       python -m streamlit run 3_app.py
+  5) 브라우저에서 http://localhost:8501  접속, 사이드바에 카카오 키 입력
+
+
+[카카오맵 키]
+  https://developers.kakao.com
+  내 애플리케이션 → 앱 키 → JavaScript 키
+  Streamlit 사이드바에 입력하거나, .streamlit/secrets.toml 에:
+    kakao_js_key = "여기에 붙여넣기"

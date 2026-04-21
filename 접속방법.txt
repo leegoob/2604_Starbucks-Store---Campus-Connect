@@ -1,0 +1,20 @@
+[회사 노트북·다른 PC에서 쓰는 방법]
+
+1) 이 폴더 전체를 USB·메일·클라우드로 복사한 뒤, 그 PC에서:
+   python -m pip install -r requirements.txt
+   python -m streamlit run 3_app.py
+
+2) 같은 와이파이 안에서 "링크"처럼 열기 (다른 사람이 내 PC 화면을 볼 때)
+   터미널에서:
+   python -m streamlit run 3_app.py --server.address 0.0.0.0 --server.port 8501
+   그 PC의 IP가 192.168.0.10 이라면, 같은 네트워크의 다른 기기 브라우저에서:
+   http://192.168.0.10:8501
+   (방화벽에서 8501 포트 허용이 필요할 수 있음)
+
+3) 인터넷 어디서나 고정 "https 링크"가 필요하면
+   Streamlit Community Cloud, 클라우드 VM 등에 배포해야 합니다.
+   (회사 보안·개인정보 정책 확인 후 사용)
+
+[카카오맵 JavaScript 키]
+  Kakao Developers에서 앱 등록 후 JS 키 발급 → 앱 사이드바에 입력하거나
+  .streamlit/secrets.toml 에 kakao_js_key = "발급키" 로 저장

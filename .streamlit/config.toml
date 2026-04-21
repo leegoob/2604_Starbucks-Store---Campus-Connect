@@ -1,0 +1,13 @@
+[server]
+headless = true
+port = 8501
+
+# 스타벅스 그린 — 슬라이더·멀티셀렉트·탭 강조 등 기본 빨강 대신 사용
+[theme]
+base = "light"
+primaryColor = "#00704A"
+backgroundColor = "#FFFFFF"
+# 메인과 위젯 배경 차이를 줄여 겹쳐 보이는 하얀 안개 느낌 완화
+secondaryBackgroundColor = "#FAFAFA"
+textColor = "#1a1a1a"
+font = "sans serif"

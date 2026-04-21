@@ -1,0 +1,15 @@
+# https://editorconfig.org — keep Python as UTF-8 (avoids accidental UTF-16 saves on Windows)
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+
+[*.py]
+indent_style = space
+indent_size = 4
+
+[*.{toml,md,txt}]
+indent_style = space
+indent_size = 4
