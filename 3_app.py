@@ -36,10 +36,6 @@ _SCHOOL_CENTRIC_NUMERIC_SORT_COLS = frozenset({"연관_매장_수"})
 PRETENDARD_CSS = "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css"
 FONT_STACK = '"Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif'
 FONT_STACK_HTML = "'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif"
-STARBUCKS_LOGO_URL = (
-    "https://upload.wikimedia.org/wikipedia/en/thumb/d/d3/"
-    "Starbucks_Corporation_Logo_2011.svg/200px-Starbucks_Corporation_Logo_2011.svg.png"
-)
 # 위젯·코드 느낌 보조 글꼴 (데이터 입력/콤보)
 FONT_MONO = (
     "ui-monospace, 'SF Mono', 'Cascadia Code', 'Consolas', 'Malgun Gothic', monospace"
@@ -1912,7 +1908,6 @@ def main() -> None:
     )
     st.markdown(
         f'''<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin:0 0 4px 0;padding:4px 4px 10px 4px;border-bottom:2px solid {STARBUCKS_GREEN};background:linear-gradient(180deg,rgba(0,112,74,0.06) 0%,rgba(0,112,74,0) 55%);font-family:{FONT_STACK};">
-  <img src="{STARBUCKS_LOGO_URL}" alt="" width="56" height="56" style="object-fit:contain;flex-shrink:0;filter:drop-shadow(0 3px 12px rgba(0,112,74,0.2));" />
   <h1 style="margin:0;padding:0;font-size:1.95rem;font-weight:800;color:{STARBUCKS_GREEN};letter-spacing:-0.03em;line-height:1.15;border:none;font-family:{FONT_STACK};">{html.escape(APP_TITLE)}</h1>
 </div>''',
         unsafe_allow_html=True,
