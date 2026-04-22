@@ -3025,8 +3025,7 @@ def main() -> None:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="dl_summary_dedup",
                 )
-                dedup_view_screen = dedup_view_disp.drop(columns=["학교주소"], errors="ignore")
-                render_table(dedup_view_screen, use_container_width=True, height=360)
+                render_table(dedup_view_disp, use_container_width=True, height=360)
                 st.markdown(
                     f"""<div style="color:rgba(49,51,63,0.78);font-size:0.96rem;line-height:1.55;margin:0.08rem 0 0.35rem 0;">
 • 정의(2) 학교 통합 목록: 취합 매장 전체를 합쳐 중복 학교를 1번만 남긴 목록입니다.<br>
