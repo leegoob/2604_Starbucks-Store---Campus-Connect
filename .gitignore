@@ -11,9 +11,17 @@ _backups/
 processed_data.tmp.csv
 kakao_missing_schools_failed.csv
 kakao_missing_schools_recovered.csv
+kakao_sync_stores_failed.csv
 kakao_geocode_failed.txt
 _debug_*.py
 _debug_*.txt
 _run_*.txt
 _verify*.txt
 _dryrun*.txt
+_compare_*.py
+_show_*.py
+_cmp.txt
+_diff.txt
+
+# Excel 임시 잠금 파일
+~$*.xlsx
