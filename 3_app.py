@@ -1973,6 +1973,21 @@ def main() -> None:
     except Exception:
         pass
 
+    def _fmt_ref_date(s: str) -> str:
+        """'2026-05-11' → '26.5.11'. 형식이 다르면 원문 그대로."""
+        s = (s or "").strip()
+        if not s:
+            return ""
+        try:
+            from datetime import datetime
+            d = datetime.strptime(s, "%Y-%m-%d")
+            return f"{d.year % 100}.{d.month}.{d.day}"
+        except Exception:
+            return s
+
+    store_ref_disp = _fmt_ref_date(store_ref) or "26.5.11"
+    school_ref_disp = _fmt_ref_date(school_ref) or "24.10.7"
+
     src = "csv"
     upload_file_hash = ""
     st.caption(
@@ -1999,13 +2014,13 @@ def main() -> None:
         with m1:
             st.metric("매장", f"{len(stores_base):,}")
             st.markdown(
-                '<p class="metric-ref-date">26.3.31 기준</p>',
+                f'<p class="metric-ref-date">{store_ref_disp} 기준</p>',
                 unsafe_allow_html=True,
             )
         with m2:
             st.metric("학교", f"{len(schools):,}")
             st.markdown(
-                '<p class="metric-ref-date">26.4.1 기준</p>',
+                f'<p class="metric-ref-date">{school_ref_disp} 기준</p>',
                 unsafe_allow_html=True,
             )
         with st.expander("표시·세션 안내", expanded=False):
@@ -2176,9 +2191,9 @@ def main() -> None:
 
     sum1, sum2 = st.columns(2)
     with sum1:
-        st.caption(f"선택된 매장 {len(stores_view):,}곳(26.3.31기준)")
+        st.caption(f"선택된 매장 {len(stores_view):,}곳({store_ref_disp}기준)")
     with sum2:
-        st.caption(f"학교 풀 {len(schools_use):,}교(26.4.1기준)")
+        st.caption(f"학교 풀 {len(schools_use):,}교({school_ref_disp}기준)")
     _scope_bits: list[str] = [
         f"매장 {len(stores_view):,}곳",
         f"학교 {len(schools_use):,}교",
