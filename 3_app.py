@@ -1494,6 +1494,7 @@ def build_school_dedup_table(exec_df: pd.DataFrame) -> pd.DataFrame:
                 "연관매장수",
                 "최대직선거리(km)",
                 "관련지역",
+                "_regions_all",
                 "매장목록",
                 "담당부서",
                 "담당자명",
@@ -1530,6 +1531,7 @@ def build_school_dedup_table(exec_df: pd.DataFrame) -> pd.DataFrame:
                 "연관매장수": len(stores),
                 "최대직선거리(km)": round(float(pd.to_numeric(grp["직선거리(km)"], errors="coerce").max()), 3),
                 "관련지역": " · ".join(regions[:8]) + (f" …외 {len(regions)-8}" if len(regions) > 8 else ""),
+                "_regions_all": tuple(regions),
                 "매장목록": " · ".join(stores[:12]) + (f" …외 {len(stores)-12}" if len(stores) > 12 else ""),
                 "담당부서": _first_non_empty(grp["담당부서"]),
                 "담당자명": _first_non_empty(grp["담당자명"]),
@@ -3009,6 +3011,33 @@ def main() -> None:
                 st.caption(f"현재 목록 학교 수: {len(dedup_view):,}개")
                 dedup_view_disp = dedup_view.copy()
                 dedup_view_disp["집계기준"] = f"매장별 최근접 상위 {int(campaign_n_near)}개"
+
+                _bucket_order = ["운영1~3", "운영4~6", "운영7~9", "운영10~13"]
+
+                def _resolve_buckets(regions_tuple: object) -> str:
+                    found: set[str] = set()
+                    try:
+                        regions_iter = list(regions_tuple) if regions_tuple else []
+                    except TypeError:
+                        regions_iter = []
+                    for rg in regions_iter:
+                        rg_s = str(rg).strip()
+                        if not rg_s:
+                            continue
+                        for bkt, rgs in bucket_to_regions.items():
+                            if rg_s in rgs:
+                                found.add(bkt)
+                                break
+                    if not found:
+                        return ""
+                    return ", ".join(b for b in _bucket_order if b in found)
+
+                if "_regions_all" in dedup_view_disp.columns:
+                    dedup_view_disp["운영팀 묶음"] = dedup_view_disp["_regions_all"].map(_resolve_buckets)
+                    dedup_view_disp = dedup_view_disp.drop(columns=["_regions_all"], errors="ignore")
+                else:
+                    dedup_view_disp["운영팀 묶음"] = ""
+
                 pref_cols = [
                     "학교명",
                     "학교유형",
@@ -3019,6 +3048,7 @@ def main() -> None:
                     "집계기준",
                     "최대직선거리(km)",
                     "관련지역",
+                    "운영팀 묶음",
                 ]
                 rest_cols = [c for c in dedup_view_disp.columns if c not in pref_cols]
                 dedup_view_disp = dedup_view_disp[pref_cols + rest_cols]
