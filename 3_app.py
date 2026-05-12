@@ -3029,18 +3029,61 @@ def main() -> None:
                 ]
                 rest_cols = [c for c in dedup_view_disp.columns if c not in pref_cols]
                 dedup_view_disp = dedup_view_disp[pref_cols + rest_cols]
+
+                _HS_TYPES = {"일반고", "특목고", "특성화고", "자율고"}
+                _UNIV_TYPES = {"4년제", "전문대", "사이버대", "기타대"}
+
+                def _school_group(t: object) -> str:
+                    s = str(t or "").strip()
+                    if s in _HS_TYPES:
+                        return "고등학교"
+                    if s in _UNIV_TYPES:
+                        return "대학교"
+                    return "기타"
+
+                _g = dedup_view_disp["학교유형"].map(_school_group)
+                hs_disp = dedup_view_disp[_g == "고등학교"].reset_index(drop=True)
+                univ_disp = dedup_view_disp[_g == "대학교"].reset_index(drop=True)
+                other_disp = dedup_view_disp[_g == "기타"].reset_index(drop=True)
+
                 _b_dedup = BytesIO()
                 with pd.ExcelWriter(_b_dedup, engine="openpyxl") as _w:
-                    _sanitize_table(dedup_view_disp).to_excel(_w, index=False, sheet_name="학교통합목록")
+                    _sanitize_table(dedup_view_disp).to_excel(_w, index=False, sheet_name="전체")
+                    if not hs_disp.empty:
+                        _sanitize_table(hs_disp).to_excel(_w, index=False, sheet_name="고등학교")
+                    if not univ_disp.empty:
+                        _sanitize_table(univ_disp).to_excel(_w, index=False, sheet_name="대학교")
+                    if not other_disp.empty:
+                        _sanitize_table(other_disp).to_excel(_w, index=False, sheet_name="기타")
                 _b_dedup.seek(0)
                 st.download_button(
-                    "엑셀 다운로드",
+                    "엑셀 다운로드 (전체·고등학교·대학교 시트 분리)",
                     data=_b_dedup.read(),
                     file_name="summary_2_학교통합목록.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="dl_summary_dedup",
                 )
-                render_table(dedup_view_disp, use_container_width=True, height=360)
+
+                st.markdown(
+                    f"**🏫 고등학교 통합 목록 ({len(hs_disp):,}개)** — 일반고·특목고·특성화고·자율고"
+                )
+                if hs_disp.empty:
+                    st.info("현재 필터 조건에서 고등학교가 없습니다.")
+                else:
+                    render_table(hs_disp, use_container_width=True, height=320)
+
+                st.markdown("<div style='height:0.6rem;'></div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"**🎓 대학교 통합 목록 ({len(univ_disp):,}개)** — 4년제·전문대·사이버대·기타대"
+                )
+                if univ_disp.empty:
+                    st.info("현재 필터 조건에서 대학교가 없습니다.")
+                else:
+                    render_table(univ_disp, use_container_width=True, height=320)
+
+                if not other_disp.empty:
+                    with st.expander(f"기타 ({len(other_disp):,}개) — 평생교육 등", expanded=False):
+                        render_table(other_disp, use_container_width=True, height=240)
                 st.markdown(
                     f"""<div style="color:rgba(49,51,63,0.78);font-size:0.96rem;line-height:1.55;margin:0.08rem 0 0.35rem 0;">
 • 정의(2) 학교 통합 목록: 취합 매장 전체를 합쳐 중복 학교를 1번만 남긴 목록입니다.<br>
