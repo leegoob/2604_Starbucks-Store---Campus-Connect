@@ -85,6 +85,29 @@ def _norm(s: object) -> str:
     return re.sub(r"\s+", " ", s)
 
 
+_SIDO_MAP = {
+    "서울특별시": "서울", "부산광역시": "부산", "대구광역시": "대구",
+    "인천광역시": "인천", "광주광역시": "광주", "대전광역시": "대전",
+    "울산광역시": "울산", "세종특별자치시": "세종", "제주특별자치도": "제주",
+    "강원특별자치도": "강원", "강원도": "강원",
+    "전북특별자치도": "전북", "전라북도": "전북",
+    "경기도": "경기", "충청북도": "충북", "충청남도": "충남",
+    "전라남도": "전남", "경상북도": "경북", "경상남도": "경남",
+}
+
+
+def _addr_match_key(addr: object) -> str:
+    """주소 매칭용 정규화 키 (시도 단축 + 괄호·공백·기호 제거)."""
+    s = str(addr or "").strip()
+    s = re.sub(r"\([^)]*\)", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    for full, short in _SIDO_MAP.items():
+        if s.startswith(full):
+            s = short + s[len(full):]
+            break
+    return re.sub(r"[^\w]", "", s)
+
+
 def strip_parens(addr: str) -> str:
     """주소의 괄호 () 와 그 안 내용 제거."""
     out = re.sub(r"\([^)]*\)", "", addr)
@@ -250,22 +273,28 @@ def main() -> None:
     proc = pd.read_csv(PROCESSED, encoding="utf-8-sig")
     proc_schools = proc[proc["entity_type"] == "school"].copy()
 
-    def key_of(n: object, a: object) -> str:
-        return f"{_norm(n)}||{_norm(a)}"
-
-    existing_keys = set(
-        proc_schools.apply(lambda r: key_of(r["name"], r["address"]), axis=1)
-    )
-    existing_names = set(proc_schools["name"].map(lambda x: _norm(x)))
+    raw["_n"] = raw["name"].astype(str).str.strip()
+    raw["_addr_key"] = raw["address"].map(_addr_match_key)
+    proc_schools["_n"] = proc_schools["name"].astype(str).str.strip()
+    proc_schools["_addr_key"] = proc_schools["address"].map(_addr_match_key)
 
     missing_rows = []
-    for _, r in raw.iterrows():
-        k = key_of(r.get("name", ""), r.get("address", ""))
-        if k in existing_keys:
+    raw_names = set(raw["_n"])
+    proc_names = set(proc_schools["_n"])
+
+    for nm in sorted(raw_names & proc_names):
+        rsub = raw[raw["_n"] == nm]
+        psub = proc_schools[proc_schools["_n"] == nm]
+        if len(rsub) <= len(psub):
             continue
-        if _norm(r.get("name", "")) in existing_names:
-            continue
-        missing_rows.append(r)
+        psub_keys = set(psub["_addr_key"])
+        for _, r in rsub.iterrows():
+            if r["_addr_key"] not in psub_keys:
+                missing_rows.append(r)
+
+    for nm in sorted(raw_names - proc_names):
+        for _, r in raw[raw["_n"] == nm].iterrows():
+            missing_rows.append(r)
 
     missing = pd.DataFrame(missing_rows)
     print(

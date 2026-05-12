@@ -20,8 +20,16 @@ _verify*.txt
 _dryrun*.txt
 _compare_*.py
 _show_*.py
+_find_*.py
+_reset_*.py
+_check_*.py
 _cmp.txt
 _diff.txt
+_dry.txt
+_run.txt
+_missing*.csv
+_missing*.txt
+_raw_*.csv
 
 # Excel 임시 잠금 파일
 ~$*.xlsx
