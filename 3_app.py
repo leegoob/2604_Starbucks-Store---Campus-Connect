@@ -2400,8 +2400,8 @@ def main() -> None:
 
                     slat = float(row["latitude"])
                     slon = float(row["longitude"])
-                    # 매장·지도의 인근학교는 항상 전체 학교 기준 최대 5개 고정
-                    result = top5_for_store(slat, slon, schools, n=map_near_n)
+                    # 매장·지도의 인근학교도 좌측 «학교 유형 필터» 를 따른다.
+                    result = top5_for_store(slat, slon, schools_use, n=map_near_n)
                     nearby_stores = topn_nearby_stores(
                         slat,
                         slon,
@@ -2434,9 +2434,9 @@ def main() -> None:
                     with c_left:
                         st.markdown(f"##### 인근 학교 ({map_near_n})")
                         st.caption(
-                            f"학교 좌표가 있는 전체 학교 풀에서, 선택 매장과의 "
-                            f"직선거리(Haversine, km) 가까운 순 상위 {map_near_n}개입니다. "
-                            "일정 거리(반경) 안만 보여 주는 방식이 아니며, «학교 유형 필터»는 이 표에는 적용되지 않습니다."
+                            f"좌측 «학교 유형 필터» 가 적용된 학교 풀(현재 {len(schools_use):,}교)에서, "
+                            f"선택 매장과 직선거리(Haversine, km) 가까운 순 상위 {map_near_n}개입니다. "
+                            "반경(km) 조건은 없으며, 가장 가까운 순으로만 추립니다."
                         )
                         st.caption(
                             "※ 자차·대중교통 「추정(분)」은 외부 길찾기 API가 아니라, 같은 행의 직선거리(km)만으로 계산한 참고값입니다. "
