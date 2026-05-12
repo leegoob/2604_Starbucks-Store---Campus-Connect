@@ -2895,7 +2895,7 @@ def main() -> None:
                 if mid_v not in (core_v, single_v):
                     quick_options.append(f"2순위({mid_v}개 매장 겹침)")
                 quick_options.append(f"3순위({single_v}개 매장)")
-                quick_options.append("직접범위")
+                quick_options.append("전체(1·2·3순위)")
                 mode = st.segmented_control(
                     "빠른 필터",
                     options=quick_options,
@@ -2910,7 +2910,7 @@ def main() -> None:
 • 1순위: 같은 학교가 여러 매장(기준 {core_v}개 이상)에서 동시에 가까운 학교로 잡힌 경우 — 우선 컨택 후보<br>
 • 2순위: 같은 학교가 {mid_v}개 매장에서 겹치는 경우<br>
 • 3순위: 한 매장에서만 가까운 학교로 잡힌 경우<br>
-• 직접범위: 연관매장수 최소~최대를 직접 지정
+• 전체(1·2·3순위): 우선순위 구분 없이 연관매장수 1 이상의 모든 학교 표시
 </div>""",
                     unsafe_allow_html=True,
                 )
@@ -2921,14 +2921,7 @@ def main() -> None:
                 elif mode == f"3순위({single_v}개 매장)":
                     store_n_range = (single_v, single_v)
                 else:
-                    store_n_range = st.slider(
-                        "연관매장수 범위 (최소~최대)",
-                        min_value=1,
-                        max_value=max_store_n,
-                        value=(1, max_store_n),
-                        step=1,
-                        key="campaign_dedup_store_range",
-                    )
+                    store_n_range = (single_v, max_store_n)
                 dedup_view = dedup_df.copy()
                 _sn = pd.to_numeric(dedup_view["연관매장수"], errors="coerce").fillna(0)
                 dedup_view = dedup_view[(_sn >= store_n_range[0]) & (_sn <= store_n_range[1])]
