@@ -27,9 +27,13 @@ _cmp.txt
 _diff.txt
 _dry.txt
 _run.txt
+_exp.txt
 _missing*.csv
 _missing*.txt
 _raw_*.csv
+
+univ_career_center*.xlsx
+고용노동부_*.csv
 
 # Excel 임시 잠금 파일
 ~$*.xlsx

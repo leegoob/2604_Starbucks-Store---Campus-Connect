@@ -101,6 +101,7 @@ SCHOOL_CONTACT_COLUMNS: list[tuple[str, str]] = [
     ("contact_name", "담당자명"),
     ("contact_phone", "전화번호"),
     ("contact_email", "이메일"),
+    ("contact_url", "취업센터 URL"),
 ]
 
 STORE_META_INTERNAL = ("ops_team", "store_region")
@@ -457,7 +458,7 @@ SCHOOL_FILTER_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
 
 SCHOOL_FILTER_DEF: list[tuple[str, str]] = [pair for _, pairs in SCHOOL_FILTER_GROUPS for pair in pairs]
 SCHOOL_FILTER_LABEL_BY_KEY: dict[str, str] = {k: v for k, v in SCHOOL_FILTER_DEF}
-HIDE_CONTACT_COLUMNS = ("담당부서", "담당자명", "전화번호", "이메일")
+HIDE_CONTACT_COLUMNS = ("담당부서", "담당자명", "전화번호", "이메일", "취업센터 URL")
 
 
 def school_filter_key(school_type: str) -> str:
@@ -622,9 +623,16 @@ def school_type_display_label(v: object) -> str:
     return SCHOOL_FILTER_LABEL_BY_KEY.get(key, "기타")
 
 
-def _sanitize_table(df: pd.DataFrame, *, hide_store_address: bool = False) -> pd.DataFrame:
+def _sanitize_table(
+    df: pd.DataFrame,
+    *,
+    hide_store_address: bool = False,
+    show_contact: bool = False,
+) -> pd.DataFrame:
     out = df.copy()
-    drop_cols = [c for c in HIDE_CONTACT_COLUMNS if c in out.columns]
+    drop_cols: list[str] = []
+    if not show_contact:
+        drop_cols.extend(c for c in HIDE_CONTACT_COLUMNS if c in out.columns)
     if hide_store_address and "매장주소" in out.columns:
         drop_cols.append("매장주소")
     if drop_cols:
@@ -666,8 +674,14 @@ def _format_table_cells_for_display(
             view[c] = view[c].astype(str).replace({"nan": "", "None": ""})
 
 
-def render_table(df: pd.DataFrame, *, height: int | None = None, use_container_width: bool = False) -> None:
-    view = _sanitize_table(df, hide_store_address=True)
+def render_table(
+    df: pd.DataFrame,
+    *,
+    height: int | None = None,
+    use_container_width: bool = False,
+    show_contact: bool = False,
+) -> None:
+    view = _sanitize_table(df, hide_store_address=True, show_contact=show_contact)
     if "No" not in view.columns:
         view = view.reset_index(drop=True)
         view.insert(0, "No", np.arange(1, len(view) + 1))
@@ -729,7 +743,10 @@ def _table_col_config(df: pd.DataFrame) -> dict[str, object]:
             cfg[c_name] = st.column_config.TextColumn(c_name, width=92)
             continue
         if c_name in ("담당부서", "담당자명", "전화번호", "이메일"):
-            cfg[c_name] = st.column_config.TextColumn(c_name, width=96)
+            cfg[c_name] = st.column_config.TextColumn(c_name, width=110)
+            continue
+        if c_name == "취업센터 URL":
+            cfg[c_name] = st.column_config.LinkColumn(c_name, width=120, display_text="열기")
             continue
         s = sample[col]
         max_len = max(
@@ -943,6 +960,34 @@ def _cached_batch_neighbors(
         schools_use,
         n_near,
     )
+
+
+@st.cache_data
+def load_contacts(path: str, mtime_ns: int) -> pd.DataFrame:
+    """raw_contacts.csv 를 로드해 학교 컨택 정보를 반환합니다.
+
+    필수 컬럼: name, address (raw_schools.csv 와 동일 키)
+    선택 컬럼: contact_office, contact_name, contact_phone, contact_email,
+              contact_url, contact_source, contact_last_verified
+    파일이 없으면 빈 DataFrame.
+    """
+    _ = mtime_ns
+    p = Path(path)
+    if not p.exists():
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(p, encoding="utf-8-sig", keep_default_na=False, na_filter=False)
+    except Exception:
+        try:
+            df = pd.read_csv(p, encoding="cp949", keep_default_na=False, na_filter=False)
+        except Exception:
+            return pd.DataFrame()
+    needed = {"name", "address"}
+    if not needed.issubset(df.columns):
+        return pd.DataFrame()
+    for c in df.columns:
+        df[c] = df[c].astype(str).str.strip()
+    return df
 
 
 @st.cache_data
@@ -1500,6 +1545,7 @@ def build_school_dedup_table(exec_df: pd.DataFrame) -> pd.DataFrame:
                 "담당자명",
                 "전화번호",
                 "이메일",
+                "취업센터 URL",
             ]
         )
     rows: list[dict[str, object]] = []
@@ -1533,10 +1579,11 @@ def build_school_dedup_table(exec_df: pd.DataFrame) -> pd.DataFrame:
                 "관련지역": " · ".join(regions[:8]) + (f" …외 {len(regions)-8}" if len(regions) > 8 else ""),
                 "_regions_all": tuple(regions),
                 "매장목록": " · ".join(stores[:12]) + (f" …외 {len(stores)-12}" if len(stores) > 12 else ""),
-                "담당부서": _first_non_empty(grp["담당부서"]),
-                "담당자명": _first_non_empty(grp["담당자명"]),
-                "전화번호": _first_non_empty(grp["전화번호"]),
-                "이메일": _first_non_empty(grp["이메일"]),
+                "담당부서": _first_non_empty(grp["담당부서"]) if "담당부서" in grp.columns else "",
+                "담당자명": _first_non_empty(grp["담당자명"]) if "담당자명" in grp.columns else "",
+                "전화번호": _first_non_empty(grp["전화번호"]) if "전화번호" in grp.columns else "",
+                "이메일": _first_non_empty(grp["이메일"]) if "이메일" in grp.columns else "",
+                "취업센터 URL": _first_non_empty(grp["취업센터 URL"]) if "취업센터 URL" in grp.columns else "",
             }
         )
     out = pd.DataFrame(rows)
@@ -1959,6 +2006,26 @@ def main() -> None:
     if schools.empty:
         st.error("학교 데이터가 비어 있습니다. processed_data.csv를 확인하세요.")
         st.stop()
+
+    CONTACTS_FILE = Path(__file__).parent / "raw_contacts.csv"
+    if CONTACTS_FILE.exists():
+        try:
+            _contacts_mt = int(CONTACTS_FILE.stat().st_mtime_ns)
+            contacts_df = load_contacts(str(CONTACTS_FILE), _contacts_mt)
+        except Exception:
+            contacts_df = pd.DataFrame()
+        if not contacts_df.empty:
+            merge_cols = [c for c in contacts_df.columns if c not in ("name", "address")]
+            schools = schools.drop(
+                columns=[c for c in merge_cols if c in schools.columns],
+                errors="ignore",
+            )
+            schools["name"] = schools["name"].astype(str).str.strip()
+            schools["address"] = schools["address"].astype(str).str.strip()
+            schools = schools.merge(contacts_df, on=["name", "address"], how="left")
+            for c in merge_cols:
+                if c in schools.columns:
+                    schools[c] = schools[c].fillna("").astype(str)
 
     try:
         kakao_secret = str(st.secrets.get("kakao_js_key", "") or "").strip()
@@ -3049,7 +3116,13 @@ def main() -> None:
                     "최대직선거리(km)",
                     "관련지역",
                     "운영팀 묶음",
+                    "담당부서",
+                    "담당자명",
+                    "전화번호",
+                    "이메일",
+                    "취업센터 URL",
                 ]
+                pref_cols = [c for c in pref_cols if c in dedup_view_disp.columns]
                 rest_cols = [c for c in dedup_view_disp.columns if c not in pref_cols]
                 dedup_view_disp = dedup_view_disp[pref_cols + rest_cols]
 
@@ -3071,13 +3144,13 @@ def main() -> None:
 
                 _b_dedup = BytesIO()
                 with pd.ExcelWriter(_b_dedup, engine="openpyxl") as _w:
-                    _sanitize_table(dedup_view_disp).to_excel(_w, index=False, sheet_name="전체")
+                    _sanitize_table(dedup_view_disp, show_contact=True).to_excel(_w, index=False, sheet_name="전체")
                     if not hs_disp.empty:
-                        _sanitize_table(hs_disp).to_excel(_w, index=False, sheet_name="고등학교")
+                        _sanitize_table(hs_disp, show_contact=True).to_excel(_w, index=False, sheet_name="고등학교")
                     if not univ_disp.empty:
-                        _sanitize_table(univ_disp).to_excel(_w, index=False, sheet_name="대학교")
+                        _sanitize_table(univ_disp, show_contact=True).to_excel(_w, index=False, sheet_name="대학교")
                     if not other_disp.empty:
-                        _sanitize_table(other_disp).to_excel(_w, index=False, sheet_name="기타")
+                        _sanitize_table(other_disp, show_contact=True).to_excel(_w, index=False, sheet_name="기타")
                 _b_dedup.seek(0)
                 st.download_button(
                     "엑셀 다운로드 (전체·고등학교·대학교 시트 분리)",
@@ -3093,7 +3166,7 @@ def main() -> None:
                 if hs_disp.empty:
                     st.info("현재 필터 조건에서 고등학교가 없습니다.")
                 else:
-                    render_table(hs_disp, use_container_width=True, height=320)
+                    render_table(hs_disp, use_container_width=True, height=320, show_contact=True)
 
                 st.markdown("<div style='height:0.6rem;'></div>", unsafe_allow_html=True)
                 st.markdown(
@@ -3102,11 +3175,11 @@ def main() -> None:
                 if univ_disp.empty:
                     st.info("현재 필터 조건에서 대학교가 없습니다.")
                 else:
-                    render_table(univ_disp, use_container_width=True, height=320)
+                    render_table(univ_disp, use_container_width=True, height=320, show_contact=True)
 
                 if not other_disp.empty:
                     with st.expander(f"기타 ({len(other_disp):,}개) — 평생교육 등", expanded=False):
-                        render_table(other_disp, use_container_width=True, height=240)
+                        render_table(other_disp, use_container_width=True, height=240, show_contact=True)
                 st.markdown(
                     f"""<div style="color:rgba(49,51,63,0.78);font-size:0.96rem;line-height:1.55;margin:0.08rem 0 0.35rem 0;">
 • 정의(2) 학교 통합 목록: 취합 매장 전체를 합쳐 중복 학교를 1번만 남긴 목록입니다.<br>
