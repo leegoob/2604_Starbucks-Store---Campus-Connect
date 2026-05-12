@@ -1075,6 +1075,87 @@ def top5_for_store(slat: float, slon: float, schools: pd.DataFrame, n: int = 5) 
     return pd.DataFrame(rows).reset_index(drop=True)
 
 
+def _nearby_school_bin_from_filter_key(fk: str) -> str:
+    """school_filter_key 결과 → 고등학교 / 대학교 / 기타."""
+    if fk in ("hs_general", "hs_special", "hs_autonomous", "hs_specialized"):
+        return "고등학교"
+    if fk in ("univ_4year", "univ_junior", "univ_cyber", "univ_other"):
+        return "대학교"
+    return "기타"
+
+
+def topn_hs_univ_for_store(
+    slat: float,
+    slon: float,
+    schools: pd.DataFrame,
+    n_each: int = 5,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """인근 학교: 고등학교 상위 n_each개 + 대학교 상위 n_each개 (직선거리 기준, 각각 독립 정렬)."""
+    n_each = max(1, min(int(n_each), 50))
+    sub = schools.dropna(subset=["latitude", "longitude"])
+    if sub.empty:
+        empty = pd.DataFrame(
+            columns=[
+                "학교명",
+                "학교구분",
+                "직선거리(km)",
+                "자차 추정(분)",
+                "대중교통 추정(분)",
+                "주소",
+                "_school_key",
+            ]
+            + ["_geo_lat", "_geo_lng"]
+            + [kr for _, kr in SCHOOL_CONTACT_COLUMNS]
+        )
+        return empty.copy(), empty.copy()
+
+    lat = sub["latitude"].astype(float).to_numpy()
+    lon = sub["longitude"].astype(float).to_numpy()
+    slat_r = math.radians(slat)
+    slon_r = math.radians(slon)
+    lat_r = np.radians(lat)
+    lon_r = np.radians(lon)
+    dlat = lat_r - slat_r
+    dlon = lon_r - slon_r
+    sin_dlat = np.sin(dlat / 2.0)
+    sin_dlon = np.sin(dlon / 2.0)
+    a = sin_dlat * sin_dlat + np.cos(slat_r) * np.cos(lat_r) * sin_dlon * sin_dlon
+    c = 2.0 * np.arctan2(np.sqrt(a), np.sqrt(np.maximum(0.0, 1.0 - a)))
+    dist_km = 6371.0 * c
+    sub = sub.assign(_dkm=dist_km)
+    sub["_bin"] = sub["school_type"].map(
+        lambda x: _nearby_school_bin_from_filter_key(school_filter_key(str(x or "")))
+    )
+
+    def _slice_rows(bin_label: str) -> pd.DataFrame:
+        part = sub[sub["_bin"] == bin_label].nsmallest(n_each, "_dkm")
+        rows: list[dict[str, object]] = []
+        for _, s in part.iterrows():
+            d = float(s["_dkm"])
+            _car_m, _tr_m = est_travel_minutes_from_straight_km(d)
+            row = {
+                "학교명": simplify_school_name(s.get("name", "")),
+                "학교구분": school_type_display_label(s.get("school_type", "")),
+                "직선거리(km)": round(d, 3),
+                "자차 추정(분)": _car_m,
+                "대중교통 추정(분)": _tr_m,
+                "주소": s["address"],
+                "_school_key": _school_row_key(s.get("name", ""), s.get("address", "")),
+                "_geo_lat": float(s["latitude"]),
+                "_geo_lng": float(s["longitude"]),
+            }
+            for internal, kr in SCHOOL_CONTACT_COLUMNS:
+                if internal in schools.columns:
+                    v = s[internal]
+                    row[kr] = str(v).strip() if pd.notna(v) else ""
+                else:
+                    row[kr] = ""
+            rows.append(row)
+        return pd.DataFrame(rows).reset_index(drop=True)
+
+    return _slice_rows("고등학교"), _slice_rows("대학교")
+
+
 def topn_nearby_stores(
     slat: float,
     slon: float,
@@ -2470,7 +2551,11 @@ def main() -> None:
                     slat = float(row["latitude"])
                     slon = float(row["longitude"])
                     # 매장·지도의 인근학교도 좌측 «학교 유형 필터» 를 따른다.
-                    result = top5_for_store(slat, slon, schools_use, n=map_near_n)
+                    # 고등학교·대학교 각각 가까운 순 상위 N개씩(합계 최대 2N).
+                    result_hs, result_univ = topn_hs_univ_for_store(
+                        slat, slon, schools_use, n_each=map_near_n
+                    )
+                    result = pd.concat([result_hs, result_univ], ignore_index=True)
                     nearby_stores = topn_nearby_stores(
                         slat,
                         slon,
@@ -2501,22 +2586,39 @@ def main() -> None:
                     st.caption(str(row["address"]))
                     c_left, c_right = st.columns([1.05, 1.0], gap="medium")
                     with c_left:
-                        st.markdown(f"##### 인근 학교 ({map_near_n})")
+                        st.markdown(f"##### 인근 학교 — 고등학교 ({map_near_n})")
                         st.caption(
                             f"좌측 «학교 유형 필터» 가 적용된 학교 풀(현재 {len(schools_use):,}교)에서, "
-                            f"선택 매장과 직선거리(Haversine, km) 가까운 순 상위 {map_near_n}개입니다. "
-                            "반경(km) 조건은 없으며, 가장 가까운 순으로만 추립니다."
+                            f"일반고·특목고·특성화고·자율고만 대상으로 선택 매장과 직선거리 가까운 순 상위 {map_near_n}개입니다."
                         )
                         st.caption(
                             "※ 자차·대중교통 「추정(분)」은 외부 길찾기 API가 아니라, 같은 행의 직선거리(km)만으로 계산한 참고값입니다. "
                             + TRAVEL_TIME_HELP
                             + f" 유효거리(km) ≈ 직선×{_TRAVEL_ROAD_FACTOR}, 자차 {_TRAVEL_CAR_KMH}km/h·대중교통 {_TRAVEL_TRANSIT_KMH}km/h로 분을 환산합니다."
                         )
-                        _show = result.drop(
-                            columns=[c for c in ("_geo_lat", "_geo_lng", "_school_key") if c in result.columns],
+                        _show_hs = result_hs.drop(
+                            columns=[c for c in ("_geo_lat", "_geo_lng", "_school_key") if c in result_hs.columns],
                             errors="ignore",
                         )
-                        render_table(_show, use_container_width=True)
+                        if _show_hs.empty:
+                            st.info("현재 필터·위치 기준으로 표시할 고등학교가 없습니다.")
+                        else:
+                            render_table(_show_hs, use_container_width=True)
+
+                        st.markdown("<div style='height:0.45rem;'></div>", unsafe_allow_html=True)
+                        st.markdown(f"##### 인근 학교 — 대학교 ({map_near_n})")
+                        st.caption(
+                            "4년제·전문대·사이버대·기타대만 대상으로, 위와 동일하게 직선거리 가까운 순입니다. "
+                            "고등학교 표와는 서로 독립적으로 상위 N개를 뽑습니다."
+                        )
+                        _show_univ = result_univ.drop(
+                            columns=[c for c in ("_geo_lat", "_geo_lng", "_school_key") if c in result_univ.columns],
+                            errors="ignore",
+                        )
+                        if _show_univ.empty:
+                            st.info("현재 필터·위치 기준으로 표시할 대학교가 없습니다.")
+                        else:
+                            render_table(_show_univ, use_container_width=True)
                         st.markdown("##### 인근 매장 (5)")
                         st.caption(
                             "다른 매장 중 선택 매장과 직선거리(km) 가까운 순 상위 5곳입니다. "
@@ -2535,6 +2637,8 @@ def main() -> None:
                         st.markdown("##### 지도")
                         st.caption(
                             "진한 초록 핀 = 선택 매장, 투명 초록 핀 = 인근 매장, 파란 핀 = 학교. "
+                            "학교 핀은 고등학교·대학교 각 상위 "
+                            f"{map_near_n}개까지 합친 최대 {map_near_n * 2}개입니다. "
                             "동명 학교는 아래에서 구분·강조합니다."
                         )
                         map_hl_key = ""
