@@ -1744,6 +1744,34 @@ def _campaign_full_store_list_by_school(
     return out
 
 
+def _campaign_full_regions_by_school(
+    exec_hs: pd.DataFrame, exec_univ: pd.DataFrame,
+) -> dict[tuple[str, str], str]:
+    """학교(명+주소)별 연관 권역(관련지역) 전체를 ' · '로 이은 문자열. 엑셀 관련지역 컬럼용."""
+    parts = [df for df in (exec_hs, exec_univ) if not df.empty]
+    if not parts:
+        return {}
+    work = pd.concat(parts, ignore_index=True)
+    if "학교주소" not in work.columns:
+        work["학교주소"] = ""
+    work["학교명"] = work["학교명"].astype(str).str.strip()
+    work["학교주소"] = work["학교주소"].astype(str).str.strip()
+    regions_col = (
+        "권역"
+        if "권역" in work.columns
+        else ("campaign_region" if "campaign_region" in work.columns else "")
+    )
+    if not regions_col:
+        return {}
+    out: dict[tuple[str, str], str] = {}
+    for (sn, sa), grp in work.groupby(["학교명", "학교주소"], sort=False):
+        regions = sorted(
+            {str(x).strip() for x in grp[regions_col].tolist() if str(x).strip()}
+        )
+        out[(str(sn), str(sa))] = " · ".join(regions)
+    return out
+
+
 def _with_full_store_list_for_excel(
     df: pd.DataFrame, school_to_stores: dict[tuple[str, str], str]
 ) -> pd.DataFrame:
@@ -1755,6 +1783,20 @@ def _with_full_store_list_for_excel(
     prev = out["매장목록"].tolist()
     keys = zip(k1, k2)
     out["매장목록"] = [school_to_stores.get(k, prev[i]) for i, k in enumerate(keys)]
+    return out
+
+
+def _with_full_region_list_for_excel(
+    df: pd.DataFrame, school_to_regions: dict[tuple[str, str], str]
+) -> pd.DataFrame:
+    if df.empty or "관련지역" not in df.columns:
+        return df
+    out = df.copy()
+    k1 = out["학교명"].astype(str).str.strip()
+    k2 = out["학교주소"].astype(str).str.strip()
+    prev = out["관련지역"].tolist()
+    keys = zip(k1, k2)
+    out["관련지역"] = [school_to_regions.get(k, prev[i]) for i, k in enumerate(keys)]
     return out
 
 
@@ -3000,6 +3042,8 @@ def main() -> None:
             dedup_hs_raw = build_school_dedup_table(exec_hs)
             dedup_univ_raw = build_school_dedup_table(exec_univ)
             dedup_df = pd.concat([dedup_hs_raw, dedup_univ_raw], ignore_index=True)
+            _excel_dedup_store_map = _campaign_full_store_list_by_school(exec_hs, exec_univ)
+            _excel_dedup_region_map = _campaign_full_regions_by_school(exec_hs, exec_univ)
             p1 = len(exec_df)
             p2 = int(len(dedup_hs_raw) + len(dedup_univ_raw))
             k1, k2, k3, k4, k5 = st.columns(5)
@@ -3455,11 +3499,22 @@ def main() -> None:
                     miss_t3_base, selected39, _combined_nearby_pool, n_take=3
                 )
 
-                _full_stores_map = _campaign_full_store_list_by_school(exec_hs, exec_univ)
-                _dedup_xl = _with_full_store_list_for_excel(dedup_view_disp, _full_stores_map)
-                _hs_xl = _with_full_store_list_for_excel(hs_disp, _full_stores_map)
-                _univ_xl = _with_full_store_list_for_excel(univ_disp, _full_stores_map)
-                _other_xl = _with_full_store_list_for_excel(other_disp, _full_stores_map)
+                _dedup_xl = _with_full_region_list_for_excel(
+                    _with_full_store_list_for_excel(dedup_view_disp, _excel_dedup_store_map),
+                    _excel_dedup_region_map,
+                )
+                _hs_xl = _with_full_region_list_for_excel(
+                    _with_full_store_list_for_excel(hs_disp, _excel_dedup_store_map),
+                    _excel_dedup_region_map,
+                )
+                _univ_xl = _with_full_region_list_for_excel(
+                    _with_full_store_list_for_excel(univ_disp, _excel_dedup_store_map),
+                    _excel_dedup_region_map,
+                )
+                _other_xl = _with_full_region_list_for_excel(
+                    _with_full_store_list_for_excel(other_disp, _excel_dedup_store_map),
+                    _excel_dedup_region_map,
+                )
 
                 _b_dedup = BytesIO()
                 with pd.ExcelWriter(_b_dedup, engine="openpyxl") as _w:
@@ -3589,7 +3644,18 @@ def main() -> None:
             with pd.ExcelWriter(b_exec, engine="openpyxl") as w:
                 _sanitize_table(show).to_excel(w, index=False, sheet_name="취합매장")
                 if not exec_df.empty:
-                    _sanitize_table(dedup_df).to_excel(w, index=False, sheet_name="학교중복통합")
+                    _dedup_bundle = (
+                        _with_full_region_list_for_excel(
+                            _with_full_store_list_for_excel(
+                                dedup_df.copy(), _excel_dedup_store_map
+                            ),
+                            _excel_dedup_region_map,
+                        )
+                        .drop(columns=["_regions_all"], errors="ignore")
+                    )
+                    _sanitize_table(_dedup_bundle).to_excel(
+                        w, index=False, sheet_name="학교중복통합"
+                    )
             b_exec.seek(0)
             st.download_button(
                 "업로드 결과 엑셀 다운로드",
