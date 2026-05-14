@@ -620,18 +620,19 @@ MISS_TIER_DEDUP_EXCEL_COLUMNS: tuple[str, ...] = (
 )
 
 
-def miss_stores_df_to_dedup_excel_layout(
-    miss_df: pd.DataFrame,
+def miss_tier_grouped_schools_to_dedup_excel_layout(
+    miss_disp: pd.DataFrame,
     *,
     tier_label: str,
     campaign_n_near: int,
     bucket_to_regions: dict[str, set[str]],
 ) -> pd.DataFrame:
-    """미포함 매장 행을 학교 통합 «전체» 시트와 같은 열 구성으로 바꾼다. 학교명은 근접1~3 학교명(비어 있으면 공란)."""
+    """미포함 매장의 근접1~3 학교를 (원문 학교명·주소)로 묶어 «전체» 시트와 동일 열 구성으로 만든다."""
     _basis = f"매장별 최근접 상위 {int(campaign_n_near)}개"
     _bucket_order = ("운영1~3", "운영4~6", "운영7~9", "운영10~13")
-    if miss_df.empty:
-        return pd.DataFrame(columns=list(MISS_TIER_DEDUP_EXCEL_COLUMNS))
+    empty = pd.DataFrame(columns=list(MISS_TIER_DEDUP_EXCEL_COLUMNS))
+    if miss_disp.empty or "매장명" not in miss_disp.columns:
+        return empty
 
     def _bucket_for_region(rg: str) -> str:
         rg_s = str(rg or "").strip()
@@ -640,51 +641,22 @@ def miss_stores_df_to_dedup_excel_layout(
         found = [b for b in _bucket_order if rg_s in bucket_to_regions.get(b, set())]
         return ", ".join(found)
 
-    rows: list[dict[str, object]] = []
-    for _, r in miss_df.iterrows():
-        reg = str(r.get("지역", "")).strip()
-        mname = str(r.get("매장명", "")).strip()
-        cob = str(r.get("담당자묶음", "")).strip() or _bucket_for_region(reg)
-        n_link = int(pd.to_numeric(r.get("매칭학교수", 0), errors="coerce") or 0)
-        sch_parts: list[str] = []
-        for j in (1, 2, 3):
-            k = f"근접{j}_학교명"
-            if k in miss_df.columns:
-                sv = str(r.get(k, "") or "").strip()
-                if sv:
-                    sch_parts.append(sv)
-        school_names_cell = " · ".join(sch_parts)
-        rows.append(
-            {
-                "학교명": school_names_cell,
-                "학교유형": tier_label,
-                "캠퍼스구분": "",
-                "학교주소": str(r.get("매장주소", "")).strip(),
-                "연관매장수": n_link,
-                "매장목록": mname,
-                "집계기준": _basis,
-                "최대직선거리(km)": np.nan,
-                "관련지역": reg,
-                "운영팀 묶음": cob,
-            }
-        )
-    return pd.DataFrame(rows, columns=list(MISS_TIER_DEDUP_EXCEL_COLUMNS))
+    agg_stores: dict[tuple[str, str], set[str]] = defaultdict(set)
+    agg_dists: dict[tuple[str, str], list[float]] = defaultdict(list)
+    agg_regs: dict[tuple[str, str], set[str]] = defaultdict(set)
+    agg_ops: dict[tuple[str, str], set[str]] = defaultdict(set)
 
-
-def summarize_miss_tier_by_nearby_school(miss_disp: pd.DataFrame) -> pd.DataFrame:
-    """N순위 미포함 매장 표(근접1~3)를 학교(명·주소) 기준으로 묶어 연관 매장 수·목록을 집계."""
-    cols = ["학교명", "학교주소", "연관미포함매장수", "미포함매장목록"]
-    if miss_disp.empty or "매장명" not in miss_disp.columns:
-        return pd.DataFrame(columns=cols)
-    agg: dict[tuple[str, str], set[str]] = defaultdict(set)
     for _, r in miss_disp.iterrows():
         sn = str(r.get("매장명", "") or "").strip()
         if not sn:
             continue
-        seen_keys: set[tuple[str, str]] = set()
+        reg = str(r.get("지역", "") or "").strip()
+        cob = str(r.get("담당자묶음", "") or "").strip()
+        seen_row: set[tuple[str, str]] = set()
         for j in (1, 2, 3):
             kn = f"근접{j}_학교명"
             ka = f"근접{j}_주소"
+            gd = f"근접{j}_직선거리(km)"
             if kn not in miss_disp.columns:
                 continue
             nm = str(r.get(kn, "") or "").strip()
@@ -692,24 +664,53 @@ def summarize_miss_tier_by_nearby_school(miss_disp: pd.DataFrame) -> pd.DataFram
                 continue
             addr = str(r.get(ka, "") or "").strip() if ka in miss_disp.columns else ""
             key = (nm, addr)
-            if key in seen_keys:
+            if key in seen_row:
                 continue
-            seen_keys.add(key)
-            agg[key].add(sn)
-    if not agg:
-        return pd.DataFrame(columns=cols)
+            seen_row.add(key)
+            agg_stores[key].add(sn)
+            if gd in miss_disp.columns:
+                v = pd.to_numeric(r.get(gd), errors="coerce")
+                if pd.notna(v):
+                    agg_dists[key].append(float(v))
+            if reg:
+                agg_regs[key].add(reg)
+            if cob:
+                agg_ops[key].add(cob)
+
+    if not agg_stores:
+        return empty
+
     rows: list[dict[str, object]] = []
-    for (nm, addr), stores in agg.items():
+    for (nm, addr), stores in agg_stores.items():
+        key = (nm, addr)
+        merged_reg = " · ".join(sorted(agg_regs[key]))
+        if agg_ops[key]:
+            ops_cell = ", ".join(sorted(agg_ops[key]))
+        else:
+            bset: set[str] = set()
+            for rg in agg_regs[key]:
+                for p in _bucket_for_region(rg).split(", "):
+                    if p.strip():
+                        bset.add(p.strip())
+            ops_cell = ", ".join(b for b in _bucket_order if b in bset)
+        dlist = agg_dists.get(key, [])
+        dmax = round(max(dlist), 3) if dlist else float("nan")
         rows.append(
             {
                 "학교명": simplify_school_name(nm),
+                "학교유형": tier_label,
+                "캠퍼스구분": "",
                 "학교주소": addr,
-                "연관미포함매장수": len(stores),
-                "미포함매장목록": " · ".join(sorted(stores)),
+                "연관매장수": len(stores),
+                "매장목록": " · ".join(sorted(stores)),
+                "집계기준": _basis,
+                "최대직선거리(km)": dmax,
+                "관련지역": merged_reg,
+                "운영팀 묶음": ops_cell,
             }
         )
-    out = pd.DataFrame(rows)
-    return out.sort_values(["연관미포함매장수", "학교명"], ascending=[False, True]).reset_index(drop=True)
+    out = pd.DataFrame(rows, columns=list(MISS_TIER_DEDUP_EXCEL_COLUMNS))
+    return out.sort_values(["연관매장수", "학교명"], ascending=[False, True]).reset_index(drop=True)
 
 
 def campaign_school_pools_for_summary(
@@ -3646,21 +3647,21 @@ def main() -> None:
                     miss_t3_base, selected39, _combined_nearby_pool, n_take=3
                 )
 
-                miss_t1_xl = miss_stores_df_to_dedup_excel_layout(
+                miss_t1_xl = miss_tier_grouped_schools_to_dedup_excel_layout(
                     miss_t1_disp,
-                    tier_label="1순위 미포함 매장",
+                    tier_label="1순위 미포함(근접)",
                     campaign_n_near=campaign_n_near,
                     bucket_to_regions=bucket_to_regions,
                 )
-                miss_t2_xl = miss_stores_df_to_dedup_excel_layout(
+                miss_t2_xl = miss_tier_grouped_schools_to_dedup_excel_layout(
                     miss_t2_disp,
-                    tier_label="2순위 미포함 매장",
+                    tier_label="2순위 미포함(근접)",
                     campaign_n_near=campaign_n_near,
                     bucket_to_regions=bucket_to_regions,
                 )
-                miss_t3_xl = miss_stores_df_to_dedup_excel_layout(
+                miss_t3_xl = miss_tier_grouped_schools_to_dedup_excel_layout(
                     miss_t3_disp,
-                    tier_label="3순위 미포함 매장",
+                    tier_label="3순위 미포함(근접)",
                     campaign_n_near=campaign_n_near,
                     bucket_to_regions=bucket_to_regions,
                 )
@@ -3702,7 +3703,7 @@ def main() -> None:
                     _sanitize_table(miss_t3_xl).to_excel(_w, index=False, sheet_name="3순위_미포함")
                 _b_dedup.seek(0)
                 st.download_button(
-                    "엑셀 다운로드 (통합·고등·대학·미반영·순위별미포함·전체열)",
+                    "엑셀 다운로드 (통합·고등·대학·미반영·순위별미포함=전체열·근접학교묶음)",
                     data=_b_dedup.read(),
                     file_name="summary_2_학교통합목록.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3761,64 +3762,74 @@ def main() -> None:
 
                 st.markdown(
                     f"<div style='font-size:0.95rem;font-weight:600;margin:0.75rem 0 0.25rem 0;'>"
-                    f"1순위 미포함 매장 ({len(miss_t1_disp):,}곳)</div>",
+                    f"미포함매장 ({len(miss_t1_disp):,}곳) 기반 학교 통합목록 · 1순위</div>",
                     unsafe_allow_html=True,
                 )
                 if miss_t1_disp.empty:
                     st.caption("해당 없음.")
                 else:
-                    render_table(miss_t1_disp, use_container_width=True, height=200)
-                    _t1_by_sch = summarize_miss_tier_by_nearby_school(miss_t1_disp)
-                    if not _t1_by_sch.empty:
-                        st.caption(
-                            "아래 표는 위 매장들의 근접1~3 학교를 **학교명·주소가 같은 것끼리 묶어**, "
-                            "각 학교 주변에 1순위 미포함으로 잡힌 매장 수와 매장 목록을 보여 줍니다."
+                    st.caption(
+                        "열 구성은 학교 통합 «전체»와 같습니다. «학교통합목록» 엑셀의 **1순위_미포함** 시트를 "
+                        "«전체» 시트 아래에 붙여 넣어 1순위 반영 학교와 함께 볼 수 있습니다. (행은 근접 학교 단위로 묶음)"
+                    )
+                    if miss_t1_xl.empty:
+                        st.info(
+                            "근접 후보 학교가 비어 있어 묶음 목록을 만들지 못했습니다. 매장·학교 좌표를 확인해 주세요."
                         )
+                    else:
                         render_table(
-                            _t1_by_sch,
+                            miss_t1_xl,
                             use_container_width=True,
-                            height=min(320, 80 + len(_t1_by_sch) * 26),
+                            height=min(420, 100 + len(miss_t1_xl) * 26),
                         )
+                    with st.expander("매장별 상세 (담당자묶음·근접 학교)", expanded=False):
+                        render_table(miss_t1_disp, use_container_width=True, height=220)
                 st.markdown(
                     f"<div style='font-size:0.95rem;font-weight:600;margin:0.75rem 0 0.25rem 0;'>"
-                    f"2순위 미포함 매장 ({len(miss_t2_disp):,}곳)</div>",
+                    f"미포함매장 ({len(miss_t2_disp):,}곳) 기반 학교 통합목록 · 2순위</div>",
                     unsafe_allow_html=True,
                 )
                 if miss_t2_disp.empty:
                     st.caption("해당 없음.")
                 else:
-                    render_table(miss_t2_disp, use_container_width=True, height=200)
-                    _t2_by_sch = summarize_miss_tier_by_nearby_school(miss_t2_disp)
-                    if not _t2_by_sch.empty:
-                        st.caption(
-                            "아래 표는 위 매장들의 근접1~3 학교를 **학교명·주소가 같은 것끼리 묶어**, "
-                            "각 학교 주변에 2순위 미포함으로 잡힌 매장 수와 매장 목록을 보여 줍니다."
+                    st.caption(
+                        "열 구성은 학교 통합 «전체»와 같습니다. **2순위_미포함** 엑셀 시트와 동일합니다."
+                    )
+                    if miss_t2_xl.empty:
+                        st.info(
+                            "근접 후보 학교가 비어 있어 묶음 목록을 만들지 못했습니다. 매장·학교 좌표를 확인해 주세요."
                         )
+                    else:
                         render_table(
-                            _t2_by_sch,
+                            miss_t2_xl,
                             use_container_width=True,
-                            height=min(320, 80 + len(_t2_by_sch) * 26),
+                            height=min(420, 100 + len(miss_t2_xl) * 26),
                         )
+                    with st.expander("매장별 상세 (담당자묶음·근접 학교)", expanded=False):
+                        render_table(miss_t2_disp, use_container_width=True, height=220)
                 st.markdown(
                     f"<div style='font-size:0.95rem;font-weight:600;margin:0.75rem 0 0.25rem 0;'>"
-                    f"3순위 미포함 매장 ({len(miss_t3_disp):,}곳)</div>",
+                    f"미포함매장 ({len(miss_t3_disp):,}곳) 기반 학교 통합목록 · 3순위</div>",
                     unsafe_allow_html=True,
                 )
                 if miss_t3_disp.empty:
                     st.caption("해당 없음.")
                 else:
-                    render_table(miss_t3_disp, use_container_width=True, height=200)
-                    _t3_by_sch = summarize_miss_tier_by_nearby_school(miss_t3_disp)
-                    if not _t3_by_sch.empty:
-                        st.caption(
-                            "아래 표는 위 매장들의 근접1~3 학교를 **학교명·주소가 같은 것끼리 묶어**, "
-                            "각 학교 주변에 3순위 미포함으로 잡힌 매장 수와 매장 목록을 보여 줍니다."
+                    st.caption(
+                        "열 구성은 학교 통합 «전체»와 같습니다. **3순위_미포함** 엑셀 시트와 동일합니다."
+                    )
+                    if miss_t3_xl.empty:
+                        st.info(
+                            "근접 후보 학교가 비어 있어 묶음 목록을 만들지 못했습니다. 매장·학교 좌표를 확인해 주세요."
                         )
+                    else:
                         render_table(
-                            _t3_by_sch,
+                            miss_t3_xl,
                             use_container_width=True,
-                            height=min(320, 80 + len(_t3_by_sch) * 26),
+                            height=min(420, 100 + len(miss_t3_xl) * 26),
                         )
+                    with st.expander("매장별 상세 (담당자묶음·근접 학교)", expanded=False):
+                        render_table(miss_t3_disp, use_container_width=True, height=220)
 
                 _b_un = BytesIO()
                 with pd.ExcelWriter(_b_un, engine="openpyxl") as _w:
