@@ -3331,6 +3331,40 @@ def main() -> None:
                 _miss_t1 = sum(1 for nm in _store_names_scope if nm not in _in_t1)
                 _miss_t2 = sum(1 for nm in _store_names_scope if nm not in _in_t2)
                 _miss_t3 = sum(1 for nm in _store_names_scope if nm not in _in_t3)
+
+                def _tier_miss_stores_df(names_with_tier: set[str], reason: str) -> pd.DataFrame:
+                    """해당 순위 조건 학교가 근접 후보에 없는 매장만."""
+                    m = ~stores_view_filtered["name"].astype(str).str.strip().isin(names_with_tier)
+                    sub = stores_view_filtered.loc[
+                        m, ["campaign_region", "campaign_rank", "name", "address"]
+                    ].copy()
+                    if sub.empty:
+                        return pd.DataFrame(
+                            columns=["지역", "우선순위", "매장명", "매장주소", "매칭학교수", "사유"]
+                        )
+                    out = sub.rename(
+                        columns={
+                            "campaign_region": "지역",
+                            "campaign_rank": "우선순위",
+                            "name": "매장명",
+                            "address": "매장주소",
+                        }
+                    ).sort_values(["지역", "우선순위", "매장명"]).reset_index(drop=True)
+                    out["매칭학교수"] = out["매장명"].map(
+                        lambda x: int(store_school_counts.get(str(x).strip(), 0))
+                    )
+                    out["사유"] = reason
+                    return out
+
+                _reason_t1 = (
+                    f"1순위(연관매장수 {int(core_v):,}개 이상) 조건 학교가 근접 후보에 없음"
+                )
+                _reason_t2 = f"2순위(연관매장수 {int(mid_v):,}개) 조건 학교가 근접 후보에 없음"
+                _reason_t3 = f"3순위(연관매장수 {int(single_v):,}개) 조건 학교가 근접 후보에 없음"
+                miss_t1_df = _tier_miss_stores_df(_in_t1, _reason_t1)
+                miss_t2_df = _tier_miss_stores_df(_in_t2, _reason_t2)
+                miss_t3_df = _tier_miss_stores_df(_in_t3, _reason_t3)
+
                 st.caption(
                     f"지역/담당자 조건 반영 매장 {_n_scope:,}곳 기준 — "
                     f"1순위(연관매장수 {int(core_v):,}개 이상) 조건을 만족하는 학교가 근접 후보에 없는 매장 {_miss_t1:,}곳 · "
@@ -3342,18 +3376,55 @@ def main() -> None:
                     st.success("현재 지역/담당자 조건에서 모든 매장이 1·2·3순위 중 하나에는 반영되었습니다.")
                 else:
                     st.warning(f"1·2·3순위 어디에도 반영되지 않은 매장 {len(unlinked_df):,}개")
-                    _b_un = BytesIO()
-                    with pd.ExcelWriter(_b_un, engine="openpyxl") as _w:
-                        _sanitize_table(unlinked_df).to_excel(_w, index=False, sheet_name="미반영매장")
-                    _b_un.seek(0)
-                    st.download_button(
-                        "엑셀 다운로드",
-                        data=_b_un.read(),
-                        file_name="summary_3_미반영매장.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_summary_unlinked",
-                    )
                     render_table(unlinked_df, use_container_width=True, height=220)
+
+                st.markdown(
+                    f"<div style='font-size:0.95rem;font-weight:600;margin:0.75rem 0 0.25rem 0;'>"
+                    f"1순위 미포함 매장 ({len(miss_t1_df):,}곳)</div>",
+                    unsafe_allow_html=True,
+                )
+                if miss_t1_df.empty:
+                    st.caption("해당 없음.")
+                else:
+                    render_table(miss_t1_df, use_container_width=True, height=200)
+                st.markdown(
+                    f"<div style='font-size:0.95rem;font-weight:600;margin:0.75rem 0 0.25rem 0;'>"
+                    f"2순위 미포함 매장 ({len(miss_t2_df):,}곳)</div>",
+                    unsafe_allow_html=True,
+                )
+                if miss_t2_df.empty:
+                    st.caption("해당 없음.")
+                else:
+                    render_table(miss_t2_df, use_container_width=True, height=200)
+                st.markdown(
+                    f"<div style='font-size:0.95rem;font-weight:600;margin:0.75rem 0 0.25rem 0;'>"
+                    f"3순위 미포함 매장 ({len(miss_t3_df):,}곳)</div>",
+                    unsafe_allow_html=True,
+                )
+                if miss_t3_df.empty:
+                    st.caption("해당 없음.")
+                else:
+                    render_table(miss_t3_df, use_container_width=True, height=200)
+
+                _b_un = BytesIO()
+                with pd.ExcelWriter(_b_un, engine="openpyxl") as _w:
+                    _u = unlinked_df.copy()
+                    if _u.empty:
+                        _u = pd.DataFrame(
+                            columns=["지역", "우선순위", "매장명", "매장주소", "매칭학교수", "사유"]
+                        )
+                    _sanitize_table(_u).to_excel(_w, index=False, sheet_name="전체_미반영")
+                    _sanitize_table(miss_t1_df).to_excel(_w, index=False, sheet_name="1순위_미포함")
+                    _sanitize_table(miss_t2_df).to_excel(_w, index=False, sheet_name="2순위_미포함")
+                    _sanitize_table(miss_t3_df).to_excel(_w, index=False, sheet_name="3순위_미포함")
+                _b_un.seek(0)
+                st.download_button(
+                    "엑셀 다운로드 (전체 미반영·1·2·3순위별 시트)",
+                    data=_b_un.read(),
+                    file_name="summary_3_미반영매장.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_summary_unlinked",
+                )
             b_exec = BytesIO()
             with pd.ExcelWriter(b_exec, engine="openpyxl") as w:
                 _sanitize_table(show).to_excel(w, index=False, sheet_name="취합매장")
