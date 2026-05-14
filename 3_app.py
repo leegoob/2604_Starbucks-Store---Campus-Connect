@@ -671,6 +671,47 @@ def miss_stores_df_to_dedup_excel_layout(
     return pd.DataFrame(rows, columns=list(MISS_TIER_DEDUP_EXCEL_COLUMNS))
 
 
+def summarize_miss_tier_by_nearby_school(miss_disp: pd.DataFrame) -> pd.DataFrame:
+    """N순위 미포함 매장 표(근접1~3)를 학교(명·주소) 기준으로 묶어 연관 매장 수·목록을 집계."""
+    cols = ["학교명", "학교주소", "연관미포함매장수", "미포함매장목록"]
+    if miss_disp.empty or "매장명" not in miss_disp.columns:
+        return pd.DataFrame(columns=cols)
+    agg: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for _, r in miss_disp.iterrows():
+        sn = str(r.get("매장명", "") or "").strip()
+        if not sn:
+            continue
+        seen_keys: set[tuple[str, str]] = set()
+        for j in (1, 2, 3):
+            kn = f"근접{j}_학교명"
+            ka = f"근접{j}_주소"
+            if kn not in miss_disp.columns:
+                continue
+            nm = str(r.get(kn, "") or "").strip()
+            if not nm:
+                continue
+            addr = str(r.get(ka, "") or "").strip() if ka in miss_disp.columns else ""
+            key = (nm, addr)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            agg[key].add(sn)
+    if not agg:
+        return pd.DataFrame(columns=cols)
+    rows: list[dict[str, object]] = []
+    for (nm, addr), stores in agg.items():
+        rows.append(
+            {
+                "학교명": simplify_school_name(nm),
+                "학교주소": addr,
+                "연관미포함매장수": len(stores),
+                "미포함매장목록": " · ".join(sorted(stores)),
+            }
+        )
+    out = pd.DataFrame(rows)
+    return out.sort_values(["연관미포함매장수", "학교명"], ascending=[False, True]).reset_index(drop=True)
+
+
 def campaign_school_pools_for_summary(
     schools_df: pd.DataFrame, selected_keys: set[str]
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -3727,6 +3768,17 @@ def main() -> None:
                     st.caption("해당 없음.")
                 else:
                     render_table(miss_t1_disp, use_container_width=True, height=200)
+                    _t1_by_sch = summarize_miss_tier_by_nearby_school(miss_t1_disp)
+                    if not _t1_by_sch.empty:
+                        st.caption(
+                            "아래 표는 위 매장들의 근접1~3 학교를 **학교명·주소가 같은 것끼리 묶어**, "
+                            "각 학교 주변에 1순위 미포함으로 잡힌 매장 수와 매장 목록을 보여 줍니다."
+                        )
+                        render_table(
+                            _t1_by_sch,
+                            use_container_width=True,
+                            height=min(320, 80 + len(_t1_by_sch) * 26),
+                        )
                 st.markdown(
                     f"<div style='font-size:0.95rem;font-weight:600;margin:0.75rem 0 0.25rem 0;'>"
                     f"2순위 미포함 매장 ({len(miss_t2_disp):,}곳)</div>",
