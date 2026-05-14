@@ -567,6 +567,40 @@ def filter_schools_by_keys(schools: pd.DataFrame, selected_keys: set[str]) -> pd
     return schools[mask].copy()
 
 
+# 기업(사내) 부속 대학·기술대 등: 포항공대·금오공대·에너지공대 등 일반 대학과 구분
+_CORPORATE_CAMPUS_UNIV_NAMES_EXACT: frozenset[str] = frozenset(
+    {
+        "삼성전자공과대학교",
+        "삼성중공업공과대학",
+        "대우조선해양공과대학",
+        "현대중공업공과대학",
+        "포스코기술대학",
+    }
+)
+_CORPORATE_CAMPUS_UNIV_NAME_RE = re.compile(
+    r"(?:삼성(?:전자|중공업)|대우조선해양|현대중공업|포스코).*(?:공과대학(?:교)?|기술대학)"
+)
+
+
+def _is_corporate_campus_university_name(name: object) -> bool:
+    n = str(name or "").strip()
+    if not n:
+        return False
+    if n in _CORPORATE_CAMPUS_UNIV_NAMES_EXACT:
+        return True
+    return bool(_CORPORATE_CAMPUS_UNIV_NAME_RE.search(n))
+
+
+def filter_out_corporate_campus_universities(schools: pd.DataFrame) -> pd.DataFrame:
+    """대학(4년제·전문대·사이버·기타대) 분류 중 기업 부속 캠퍼스만 제거. 고등학교 등은 그대로."""
+    if schools.empty or "name" not in schools.columns or "school_type" not in schools.columns:
+        return schools
+    keys = schools["school_type"].map(school_filter_key)
+    is_univ = keys.isin(_CAMPAIGN_UNIV_FILTER_KEYS)
+    corp = schools["name"].map(_is_corporate_campus_university_name)
+    return schools[~(is_univ & corp)].copy().reset_index(drop=True)
+
+
 def campaign_school_pools_for_summary(
     schools_df: pd.DataFrame, selected_keys: set[str]
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -2182,6 +2216,7 @@ def main() -> None:
     schools = df[df["entity_type"] == "school"].copy()
     if "school_type" in schools.columns:
         schools["school_type"] = schools["school_type"].map(normalize_school_type_value)
+    schools = filter_out_corporate_campus_universities(schools)
 
     if schools.empty:
         st.error("학교 데이터가 비어 있습니다. processed_data.csv를 확인하세요.")
@@ -2221,7 +2256,8 @@ def main() -> None:
     upload_file_hash = ""
     st.caption(
         "내부 분석용 · 데이터 `processed_data.csv` · 좌측 필터는 전 탭에 동일 적용 · "
-        "엑셀 업로드(매장 특성·산학연계)는 각각 해당 영역에서만."
+        "엑셀 업로드(매장 특성·산학연계)는 각각 해당 영역에서만 · "
+        "기업 부속 공과·기술대(예: 삼성·대우조선해양·현대중공업·포스코)는 학교 목록에서 제외됩니다."
     )
     stores_base = apply_store_tags(stores_from_csv.copy())
     if stores_base.empty:
