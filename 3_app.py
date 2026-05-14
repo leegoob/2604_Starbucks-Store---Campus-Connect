@@ -984,6 +984,56 @@ def _cached_batch_neighbors(
     )
 
 
+def augment_miss_stores_with_nearby5(
+    miss_df: pd.DataFrame,
+    selected39: pd.DataFrame,
+    pool: pd.DataFrame,
+    n_near: int,
+) -> pd.DataFrame:
+    """미포함 매장 행에 고등·대학 풀을 합친 학교 목록에서 직선거리 가까운 학교 n곳(최대 5) 학교명·주소 열을 붙인다."""
+    n_take = min(5, max(1, int(n_near)))
+    mm = miss_df.copy().reset_index(drop=True)
+    for j in range(1, 6):
+        mm[f"근접{j}_학교명"] = ""
+        mm[f"근접{j}_주소"] = ""
+    if mm.empty:
+        return mm
+    if (
+        selected39.empty
+        or "latitude" not in selected39.columns
+        or "longitude" not in selected39.columns
+    ):
+        return mm
+    st_meta = selected39[["name", "address", "latitude", "longitude"]].copy()
+    st_meta["name"] = st_meta["name"].astype(str).str.strip()
+    st_meta["address"] = st_meta["address"].astype(str).str.strip()
+    st_meta = st_meta.rename(columns={"name": "매장명", "address": "매장주소"})
+    mm = mm.merge(st_meta, on=["매장명", "매장주소"], how="left")
+    pool2 = pool.dropna(subset=["latitude", "longitude"]).reset_index(drop=True)
+    if pool2.empty:
+        return mm.drop(columns=["latitude", "longitude"], errors="ignore")
+    valid = mm["latitude"].notna() & mm["longitude"].notna()
+    if not valid.any():
+        return mm.drop(columns=["latitude", "longitude"], errors="ignore")
+    sw = mm.loc[valid, ["latitude", "longitude"]].reset_index(drop=True)
+    pos = np.flatnonzero(valid.to_numpy())
+    top_idx, top_dist, sub = _cached_batch_neighbors(sw, pool2, n_take)
+    ncol = min(5, top_idx.shape[1])
+    for r in range(len(sw)):
+        row_i = int(pos[r])
+        for j in range(ncol):
+            ji = int(top_idx[r, j])
+            dkm = float(top_dist[r, j])
+            if ji < 0 or not np.isfinite(dkm):
+                continue
+            sch = sub.iloc[ji]
+            mm.iat[row_i, mm.columns.get_loc(f"근접{j + 1}_학교명")] = simplify_school_name(
+                sch.get("name", "")
+            )
+            mm.iat[row_i, mm.columns.get_loc(f"근접{j + 1}_주소")] = str(sch.get("address", "") or "")
+    return mm.drop(columns=["latitude", "longitude"], errors="ignore")
+
+
 @st.cache_data
 def load_data(path: str, mtime_ns: int) -> pd.DataFrame:
     """mtime_ns로 파일이 바뀌면 캐시를 새로 읽습니다."""
@@ -3229,52 +3279,6 @@ def main() -> None:
                 other_disp = pd.concat([hs_remain, univ_remain], ignore_index=True)
                 dedup_view_disp = pd.concat([hs_disp, univ_disp, other_disp], ignore_index=True)
 
-                _b_dedup = BytesIO()
-                with pd.ExcelWriter(_b_dedup, engine="openpyxl") as _w:
-                    _sanitize_table(dedup_view_disp).to_excel(_w, index=False, sheet_name="전체")
-                    if not hs_disp.empty:
-                        _sanitize_table(hs_disp).to_excel(_w, index=False, sheet_name="고등학교")
-                    if not univ_disp.empty:
-                        _sanitize_table(univ_disp).to_excel(_w, index=False, sheet_name="대학교")
-                    if not other_disp.empty:
-                        _sanitize_table(other_disp).to_excel(_w, index=False, sheet_name="기타")
-                _b_dedup.seek(0)
-                st.download_button(
-                    "엑셀 다운로드 (전체·고등학교·대학교 시트 분리)",
-                    data=_b_dedup.read(),
-                    file_name="summary_2_학교통합목록.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_summary_dedup",
-                )
-
-                st.markdown(
-                    f"**🏫 고등학교 통합 목록 ({len(hs_disp):,}개)** — 일반고·특목고·특성화고·자율고"
-                )
-                if hs_disp.empty:
-                    st.info("현재 필터 조건에서 고등학교가 없습니다.")
-                else:
-                    render_table(hs_disp, use_container_width=True, height=320)
-
-                st.markdown("<div style='height:0.6rem;'></div>", unsafe_allow_html=True)
-                st.markdown(
-                    f"**🎓 대학교 통합 목록 ({len(univ_disp):,}개)** — 4년제·전문대·사이버대·기타대"
-                )
-                if univ_disp.empty:
-                    st.info("현재 필터 조건에서 대학교가 없습니다.")
-                else:
-                    render_table(univ_disp, use_container_width=True, height=320)
-
-                if not other_disp.empty:
-                    with st.expander(f"기타 ({len(other_disp):,}개) — 평생교육 등", expanded=False):
-                        render_table(other_disp, use_container_width=True, height=240)
-                st.markdown(
-                    f"""<div style="color:rgba(49,51,63,0.78);font-size:0.96rem;line-height:1.55;margin:0.08rem 0 0.35rem 0;">
-• 정의(2) 학교 통합 목록: 좌측 «학교 유형»의 **고등(일반·특목·특성화·자율)** 과 **대학(4년제·전문대 등)** 을 서로 다른 학교 풀로 두고, 취합 매장마다 가까운 학교를 잡은 뒤 **고등 풀·대학 풀 각각에서만** 중복 학교를 1번만 남긴 목록입니다.<br>
-• 연관매장수: 해당 학교를 가까운 학교로 포함한 매장 수입니다(현재 매장당 상위 {int(campaign_n_near)}개 기준).<br>
-• 최대직선거리: 연관 매장 중 해당 학교와 가장 먼 매장까지의 직선거리입니다.
-</div>""",
-                    unsafe_allow_html=True,
-                )
                 linked_store_names = set(exec_reflected_any["매장명"].astype(str).str.strip().tolist())
                 store_school_counts = (
                     exec_linked.groupby("매장명")
@@ -3302,25 +3306,25 @@ def main() -> None:
                         "현재 필터 기준 매칭 학교 없음",
                         "1·2·3순위 기준(연관매장수) 밖",
                     )
-                st.markdown("##### 3) 미반영 매장 점검")
+
                 _store_names_scope = (
                     stores_view_filtered["name"].astype(str).str.strip().unique().tolist()
                 )
                 _n_scope = len(_store_names_scope)
                 if not exec_linked.empty:
-                    _el_sn = exec_linked.assign(_sn=_sn_exec)
+                    _el_sn_miss = exec_linked.assign(_sn=_sn_exec)
                     _in_t1 = set(
-                        _el_sn.loc[_el_sn["_sn"] >= int(core_v), "매장명"]
+                        _el_sn_miss.loc[_el_sn_miss["_sn"] >= int(core_v), "매장명"]
                         .astype(str)
                         .str.strip()
                     )
                     _in_t2 = set(
-                        _el_sn.loc[_el_sn["_sn"] == int(mid_v), "매장명"]
+                        _el_sn_miss.loc[_el_sn_miss["_sn"] == int(mid_v), "매장명"]
                         .astype(str)
                         .str.strip()
                     )
                     _in_t3 = set(
-                        _el_sn.loc[_el_sn["_sn"] == int(single_v), "매장명"]
+                        _el_sn_miss.loc[_el_sn_miss["_sn"] == int(single_v), "매장명"]
                         .astype(str)
                         .str.strip()
                     )
@@ -3356,21 +3360,101 @@ def main() -> None:
                     out["사유"] = reason
                     return out
 
-                _reason_t1 = (
+                _reason_t1_miss = (
                     f"1순위(연관매장수 {int(core_v):,}개 이상) 조건 학교가 근접 후보에 없음"
                 )
-                _reason_t2 = f"2순위(연관매장수 {int(mid_v):,}개) 조건 학교가 근접 후보에 없음"
-                _reason_t3 = f"3순위(연관매장수 {int(single_v):,}개) 조건 학교가 근접 후보에 없음"
-                miss_t1_df = _tier_miss_stores_df(_in_t1, _reason_t1)
-                miss_t2_df = _tier_miss_stores_df(_in_t2, _reason_t2)
-                miss_t3_df = _tier_miss_stores_df(_in_t3, _reason_t3)
+                _reason_t2_miss = f"2순위(연관매장수 {int(mid_v):,}개) 조건 학교가 근접 후보에 없음"
+                _reason_t3_miss = f"3순위(연관매장수 {int(single_v):,}개) 조건 학교가 근접 후보에 없음"
+                miss_t1_base = _tier_miss_stores_df(_in_t1, _reason_t1_miss)
+                miss_t2_base = _tier_miss_stores_df(_in_t2, _reason_t2_miss)
+                miss_t3_base = _tier_miss_stores_df(_in_t3, _reason_t3_miss)
+                _combined_nearby_pool = pd.concat(
+                    [schools_hs_camp, schools_univ_camp], ignore_index=True
+                )
+                if not _combined_nearby_pool.empty:
+                    _combined_nearby_pool = _combined_nearby_pool.drop_duplicates(
+                        subset=["name", "address"], keep="first"
+                    )
+                miss_t1_disp = augment_miss_stores_with_nearby5(
+                    miss_t1_base, selected39, _combined_nearby_pool, campaign_n_near
+                )
+                miss_t2_disp = augment_miss_stores_with_nearby5(
+                    miss_t2_base, selected39, _combined_nearby_pool, campaign_n_near
+                )
+                miss_t3_disp = augment_miss_stores_with_nearby5(
+                    miss_t3_base, selected39, _combined_nearby_pool, campaign_n_near
+                )
 
+                _b_dedup = BytesIO()
+                with pd.ExcelWriter(_b_dedup, engine="openpyxl") as _w:
+                    _sanitize_table(dedup_view_disp).to_excel(_w, index=False, sheet_name="전체")
+                    if not hs_disp.empty:
+                        _sanitize_table(hs_disp).to_excel(_w, index=False, sheet_name="고등학교")
+                    if not univ_disp.empty:
+                        _sanitize_table(univ_disp).to_excel(_w, index=False, sheet_name="대학교")
+                    if not other_disp.empty:
+                        _sanitize_table(other_disp).to_excel(_w, index=False, sheet_name="기타")
+                    _u_xl = unlinked_df.copy()
+                    if _u_xl.empty:
+                        _u_xl = pd.DataFrame(
+                            columns=["지역", "우선순위", "매장명", "매장주소", "매칭학교수", "사유"]
+                        )
+                    _sanitize_table(_u_xl).to_excel(_w, index=False, sheet_name="전체_미반영")
+                    _sanitize_table(miss_t1_disp).to_excel(_w, index=False, sheet_name="1순위_미포함")
+                    _sanitize_table(miss_t2_disp).to_excel(_w, index=False, sheet_name="2순위_미포함")
+                    _sanitize_table(miss_t3_disp).to_excel(_w, index=False, sheet_name="3순위_미포함")
+                _b_dedup.seek(0)
+                st.download_button(
+                    "엑셀 다운로드 (통합·고등·대학·미반영·순위별근접)",
+                    data=_b_dedup.read(),
+                    file_name="summary_2_학교통합목록.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_summary_dedup",
+                )
+
+                st.markdown(
+                    f"**🏫 고등학교 통합 목록 ({len(hs_disp):,}개)** — 일반고·특목고·특성화고·자율고"
+                )
+                if hs_disp.empty:
+                    st.info("현재 필터 조건에서 고등학교가 없습니다.")
+                else:
+                    render_table(hs_disp, use_container_width=True, height=320)
+
+                st.markdown("<div style='height:0.6rem;'></div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"**🎓 대학교 통합 목록 ({len(univ_disp):,}개)** — 4년제·전문대·사이버대·기타대"
+                )
+                if univ_disp.empty:
+                    st.info("현재 필터 조건에서 대학교가 없습니다.")
+                else:
+                    render_table(univ_disp, use_container_width=True, height=320)
+
+                if not other_disp.empty:
+                    with st.expander(f"기타 ({len(other_disp):,}개) — 평생교육 등", expanded=False):
+                        render_table(other_disp, use_container_width=True, height=240)
+                st.markdown(
+                    f"""<div style="color:rgba(49,51,63,0.78);font-size:0.96rem;line-height:1.55;margin:0.08rem 0 0.35rem 0;">
+• 정의(2) 학교 통합 목록: 좌측 «학교 유형»의 **고등(일반·특목·특성화·자율)** 과 **대학(4년제·전문대 등)** 을 서로 다른 학교 풀로 두고, 취합 매장마다 가까운 학교를 잡은 뒤 **고등 풀·대학 풀 각각에서만** 중복 학교를 1번만 남긴 목록입니다.<br>
+• 연관매장수: 해당 학교를 가까운 학교로 포함한 매장 수입니다(현재 매장당 상위 {int(campaign_n_near)}개 기준).<br>
+• 최대직선거리: 연관 매장 중 해당 학교와 가장 먼 매장까지의 직선거리입니다.
+</div>""",
+                    unsafe_allow_html=True,
+                )
+                st.markdown("##### 3) 미반영 매장 점검")
+                st.caption(
+                    "※ 1순위를 빠른 필터로 골랐을 때: 통합 목록에 보이는 각 학교 «매장목록»에 나오는 매장을 모두 합친 집합과 "
+                    "«1순위 미포함» 매장 집합을 합치면, 지역·담당자 묶음 조건에 걸린 반영 매장 전체와 같습니다. "
+                    "(통합 목록은 빠른 필터·권역 조건으로 표시되는 학교만 보이지만, 미포함 여부는 실행표 전체와 같은 연관매장수 기준입니다.)"
+                )
                 st.caption(
                     f"지역/담당자 조건 반영 매장 {_n_scope:,}곳 기준 — "
                     f"1순위(연관매장수 {int(core_v):,}개 이상) 조건을 만족하는 학교가 근접 후보에 없는 매장 {_miss_t1:,}곳 · "
                     f"2순위(연관매장수 {int(mid_v):,}개) 조건을 만족하는 학교가 근접 후보에 없는 매장 {_miss_t2:,}곳 · "
                     f"3순위(연관매장수 {int(single_v):,}개) 조건을 만족하는 학교가 근접 후보에 없는 매장 {_miss_t3:,}곳 "
                     "(고등·대학 풀을 합친 실행표와 동일한 연관매장수 기준입니다.)"
+                )
+                st.caption(
+                    "아래 «N순위 미포함» 표의 근접1~5 열은 고등·대학 풀을 합친 학교만 두고, 직선거리 가까운 순으로 뽑은 학교명·주소입니다."
                 )
                 if unlinked_df.empty:
                     st.success("현재 지역/담당자 조건에서 모든 매장이 1·2·3순위 중 하나에는 반영되었습니다.")
@@ -3380,31 +3464,31 @@ def main() -> None:
 
                 st.markdown(
                     f"<div style='font-size:0.95rem;font-weight:600;margin:0.75rem 0 0.25rem 0;'>"
-                    f"1순위 미포함 매장 ({len(miss_t1_df):,}곳)</div>",
+                    f"1순위 미포함 매장 ({len(miss_t1_disp):,}곳)</div>",
                     unsafe_allow_html=True,
                 )
-                if miss_t1_df.empty:
+                if miss_t1_disp.empty:
                     st.caption("해당 없음.")
                 else:
-                    render_table(miss_t1_df, use_container_width=True, height=200)
+                    render_table(miss_t1_disp, use_container_width=True, height=200)
                 st.markdown(
                     f"<div style='font-size:0.95rem;font-weight:600;margin:0.75rem 0 0.25rem 0;'>"
-                    f"2순위 미포함 매장 ({len(miss_t2_df):,}곳)</div>",
+                    f"2순위 미포함 매장 ({len(miss_t2_disp):,}곳)</div>",
                     unsafe_allow_html=True,
                 )
-                if miss_t2_df.empty:
+                if miss_t2_disp.empty:
                     st.caption("해당 없음.")
                 else:
-                    render_table(miss_t2_df, use_container_width=True, height=200)
+                    render_table(miss_t2_disp, use_container_width=True, height=200)
                 st.markdown(
                     f"<div style='font-size:0.95rem;font-weight:600;margin:0.75rem 0 0.25rem 0;'>"
-                    f"3순위 미포함 매장 ({len(miss_t3_df):,}곳)</div>",
+                    f"3순위 미포함 매장 ({len(miss_t3_disp):,}곳)</div>",
                     unsafe_allow_html=True,
                 )
-                if miss_t3_df.empty:
+                if miss_t3_disp.empty:
                     st.caption("해당 없음.")
                 else:
-                    render_table(miss_t3_df, use_container_width=True, height=200)
+                    render_table(miss_t3_disp, use_container_width=True, height=200)
 
                 _b_un = BytesIO()
                 with pd.ExcelWriter(_b_un, engine="openpyxl") as _w:
@@ -3414,9 +3498,9 @@ def main() -> None:
                             columns=["지역", "우선순위", "매장명", "매장주소", "매칭학교수", "사유"]
                         )
                     _sanitize_table(_u).to_excel(_w, index=False, sheet_name="전체_미반영")
-                    _sanitize_table(miss_t1_df).to_excel(_w, index=False, sheet_name="1순위_미포함")
-                    _sanitize_table(miss_t2_df).to_excel(_w, index=False, sheet_name="2순위_미포함")
-                    _sanitize_table(miss_t3_df).to_excel(_w, index=False, sheet_name="3순위_미포함")
+                    _sanitize_table(miss_t1_base).to_excel(_w, index=False, sheet_name="1순위_미포함")
+                    _sanitize_table(miss_t2_base).to_excel(_w, index=False, sheet_name="2순위_미포함")
+                    _sanitize_table(miss_t3_base).to_excel(_w, index=False, sheet_name="3순위_미포함")
                 _b_un.seek(0)
                 st.download_button(
                     "엑셀 다운로드 (전체 미반영·1·2·3순위별 시트)",
