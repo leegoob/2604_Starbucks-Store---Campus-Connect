@@ -460,6 +460,13 @@ SCHOOL_FILTER_DEF: list[tuple[str, str]] = [pair for _, pairs in SCHOOL_FILTER_G
 SCHOOL_FILTER_LABEL_BY_KEY: dict[str, str] = {k: v for k, v in SCHOOL_FILTER_DEF}
 HIDE_CONTACT_COLUMNS = ("담당부서", "담당자명", "전화번호", "이메일", "취업센터 URL")
 
+# 산학연계 Summary: 권역(지역)당 엑셀에 적을 수 있는 취합 매장 수 상한(고정, 슬라이더 없음)
+CAMPAIGN_MAX_STORES_PER_REGION = 3
+# 매장당 근접 학교 후보 수(고등·대학 각각 동일 기준). 슬라이더 없음 — 변경 시 이 상수만 수정.
+CAMPAIGN_SCHOOL_NEAR_PER_STORE = 5
+_CAMPAIGN_HS_FILTER_KEYS = frozenset({"hs_general", "hs_autonomous", "hs_special", "hs_specialized"})
+_CAMPAIGN_UNIV_FILTER_KEYS = frozenset({"univ_4year", "univ_junior", "univ_cyber", "univ_other"})
+
 
 def school_filter_key(school_type: str) -> str:
     """학교구분 → 고등(일반·특목·특성화) / 대학(4년제·전문대·사이버·기타대) / 기타.
@@ -563,6 +570,36 @@ def filter_schools_by_keys(schools: pd.DataFrame, selected_keys: set[str]) -> pd
         return schools.copy()
     mask = schools["school_type"].map(school_filter_key).isin(selected_keys)
     return schools[mask].copy()
+
+
+def campaign_school_pools_for_summary(
+    schools_df: pd.DataFrame, selected_keys: set[str]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """산학연계 Summary 전용: 고등학교 통합·대학 통합에 쓸 학교 풀을 서로 독립적으로 만든다.
+
+    - 고등학교 쪽 집계에는 좌측 «학교 유형 필터» 중 고등(일반·자율·특목·특성화)만 반영한다.
+    - 대학 쪽 집계에는 같은 필터 중 대학(4년제·전문대·사이버·기타)만 반영한다.
+    - 일반고만 끄면 고등학교 목록만 바뀌고, 대학교 목록은 대학 체크 상태만 따른다.
+    """
+    if not selected_keys:
+        return (
+            filter_schools_by_keys(schools_df, set(_CAMPAIGN_HS_FILTER_KEYS)),
+            filter_schools_by_keys(schools_df, set(_CAMPAIGN_UNIV_FILTER_KEYS)),
+        )
+    hs_sel = set(selected_keys) & _CAMPAIGN_HS_FILTER_KEYS
+    univ_sel = set(selected_keys) & _CAMPAIGN_UNIV_FILTER_KEYS
+    # 고등·대학을 각각 독립 적용: 고등 유형을 하나도 선택하지 않으면 고등 풀은 비움(대학 목록에 영향 없음).
+    hs_pool = (
+        filter_schools_by_keys(schools_df, hs_sel)
+        if hs_sel
+        else schools_df.iloc[0:0].copy()
+    )
+    univ_pool = (
+        filter_schools_by_keys(schools_df, univ_sel)
+        if univ_sel
+        else schools_df.iloc[0:0].copy()
+    )
+    return hs_pool, univ_pool
 
 
 def school_key_counts(schools: pd.DataFrame) -> dict[str, int]:
@@ -1414,10 +1451,12 @@ CAMPAIGN_EXEC_COLUMNS = [
     "학교유형",
     "학교주소",
     "직선거리(km)",
+    "캠퍼스구분",
     "담당부서",
     "담당자명",
     "전화번호",
     "이메일",
+    "취업센터 URL",
     "연락상태",
     "메모",
 ]
@@ -1462,6 +1501,8 @@ def parse_campaign_submission_xlsx(file_bytes: bytes) -> pd.DataFrame:
         "매장 이름": "매장명",
     }
     df = raw.rename(columns=rename_map).copy()
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated()].copy()
     if "매장명" not in df.columns:
         raise ValueError("업로드 파일에 «매장명» 열이 필요합니다.")
     if "권역" not in df.columns:
@@ -2272,6 +2313,10 @@ def main() -> None:
             st.caption(
                 f"적용 학교 **{len(schools_use)}**/{len(schools)}개교" + (f" · {tail}" if tail else "")
             )
+            st.caption(
+                "`산학연계(Summary)` 하단 **고등학교·대학교 통합 목록**만, 위 체크를 고등/대학으로 나눠 각각 적용합니다. "
+                "다른 탭은 이 전체 적용 수치를 그대로 씁니다."
+            )
             selected_labels = [lbl for fk, lbl in SCHOOL_FILTER_DEF if fk in selected_keys]
             st.caption(
                 "현재 선택: " + (", ".join(selected_labels) if selected_labels else "(없음: 전체 학교 적용)")
@@ -2768,34 +2813,30 @@ def main() -> None:
         )
         st.caption(
             "좌측 «운영팀·권역», «매장 특성 필터»는 이 탭 산출에도 동일하게 적용됩니다. "
-            "«학교 유형 필터»는 근접 학교·실행표에 반영됩니다."
+            "«학교 유형 필터»는 **고등학교 통합 목록**에는 고등(일반·자율·특목·특성화)만, "
+            "**대학교 통합 목록**에는 대학(4년제·전문대·사이버·기타)만 각각 반영됩니다. "
+            "일반고만 끄면 고등 목록만 바뀌고 대학 목록은 대학 체크만 따릅니다. "
+            "다른 탭(매장·지도 등)의 근접 계산은 기존처럼 전체 선택과 동일합니다."
         )
-        stores_per_team = st.slider(
-            "권역당 최대 취합 매장 수",
-            min_value=1,
-            max_value=5,
-            value=3,
-            step=1,
-            key="campaign_stores_per_team",
-            help="권역당 포함할 수 있는 매장 수 상한입니다. "
-            "엑셀에는 «매장명»만 적어도 되며, 권역은 데이터 기준으로 붙고 우선순위는 파일 순서로 1,2,3… 부여됩니다.",
+        st.info(
+            f"**권역당 최대 취합 매장 수는 {CAMPAIGN_MAX_STORES_PER_REGION}곳으로 고정**되어 있습니다. "
+            f"(조정 UI 없음. 엑셀에 같은 권역으로 더 많이 적어도 상위 {CAMPAIGN_MAX_STORES_PER_REGION}곳만 반영됩니다.)"
         )
-        _campaign_n_near_val = int(st.session_state.get("campaign_n_near", 3))
-        _campaign_n_near_val = max(1, min(5, _campaign_n_near_val))
-        campaign_n_near = st.slider(
-            "1개 매장 당 산학연계 학교 수",
-            min_value=1,
-            max_value=5,
-            value=_campaign_n_near_val,
-            step=1,
-            key="campaign_n_near",
-            help="업로드 후 하단 표(연락실행표/중복통합/우선연락추천)에 적용됩니다.",
+        # 권역당 취합 매장 수(3)와 별개: 매장당 근접 학교 후보 개수(고등·대학 각각 동일 기준).
+        campaign_n_near = CAMPAIGN_SCHOOL_NEAR_PER_STORE
+        st.caption(
+            f"각 취합 매장마다 직선거리 가까운 학교 **상위 {campaign_n_near}개**씩을 "
+            "**고등학교 풀**과 **대학교 풀**에서 각각 따로 뽑아 통합 목록을 만듭니다. "
+            f"(권역당 최대 {CAMPAIGN_MAX_STORES_PER_REGION}곳 취합과는 다른 설정입니다. 개수 변경은 코드 상 "
+            "`CAMPAIGN_SCHOOL_NEAR_PER_STORE` 값 수정.)"
         )
-        st.markdown(f"##### 지역별 매장 취합 (권역당 최대 {stores_per_team}곳까지)")
+        st.markdown(
+            f"##### 지역별 매장 취합 (권역당 최대 **{CAMPAIGN_MAX_STORES_PER_REGION}곳** 고정)"
+        )
         st.caption(
             "1) 빈 양식 다운로드 → 2) «매장명»만 적기(같은 권역은 위에서부터 순서대로 우선순위 부여) → 3) 업로드 · 선택적으로 권역·순위 열을 넣는 구 양식도 가능"
         )
-        tmpl = build_campaign_template(blank_rows=max(32, stores_per_team * 10))
+        tmpl = build_campaign_template(blank_rows=max(32, CAMPAIGN_MAX_STORES_PER_REGION * 10))
         tbuf = BytesIO()
         with pd.ExcelWriter(tbuf, engine="openpyxl") as w:
             tmpl.to_excel(w, index=False, sheet_name="입력템플릿")
@@ -2879,7 +2920,7 @@ def main() -> None:
         if not cached_bytes:
             st.info(
                 "빈 양식을 내려받아 «매장명»만 적은 뒤 업로드하면 됩니다. 권역은 매장 데이터에 있는 값으로 붙고, "
-                f"같은 권역 안에서는 위에서부터 1·2·3… 순서로 반영됩니다(권역당 최대 {stores_per_team}곳). 빈 행은 무시됩니다.\n\n"
+                f"같은 권역 안에서는 위에서부터 1·2·3… 순서로 반영됩니다(권역당 최대 **{CAMPAIGN_MAX_STORES_PER_REGION}곳** 고정). 빈 행은 무시됩니다.\n\n"
                 "업로드만으로는 표가 만들어지지 않습니다. 아래 「작업 시작」을 눌러 주세요. "
                 "페이지 새로고침·재접속 후에는 업로드와 「작업 시작」을 다시 할 수 있습니다."
             )
@@ -2903,7 +2944,7 @@ def main() -> None:
                 st.error(f"업로드 파일을 읽을 수 없습니다: {e}")
                 st.stop()
             selected39, warns, errs = resolve_campaign_stores(
-                plan_df, stores_base, expected_per_region=stores_per_team
+                plan_df, stores_base, expected_per_region=CAMPAIGN_MAX_STORES_PER_REGION
             )
             for wmsg in warns[:6]:
                 st.warning(wmsg)
@@ -2948,10 +2989,23 @@ def main() -> None:
                 )
                 st.stop()
 
-            exec_df = build_campaign_execution_table(selected39, schools_use, n_near=campaign_n_near)
-            dedup_df = build_school_dedup_table(exec_df)
+            schools_hs_camp, schools_univ_camp = campaign_school_pools_for_summary(schools, selected_keys)
+            exec_hs = build_campaign_execution_table(
+                selected39, schools_hs_camp, n_near=campaign_n_near
+            )
+            exec_univ = build_campaign_execution_table(
+                selected39, schools_univ_camp, n_near=campaign_n_near
+            )
+            exec_df = pd.concat([exec_hs, exec_univ], ignore_index=True)
+            exec_df = exec_df.sort_values(
+                ["권역", "우선순위", "매장명", "직선거리(km)"],
+                ascending=[True, True, True, True],
+            ).reset_index(drop=True)
+            dedup_hs_raw = build_school_dedup_table(exec_hs)
+            dedup_univ_raw = build_school_dedup_table(exec_univ)
+            dedup_df = pd.concat([dedup_hs_raw, dedup_univ_raw], ignore_index=True)
             p1 = len(exec_df)
-            p2 = dedup_df["학교명"].nunique() if not dedup_df.empty else 0
+            p2 = int(len(dedup_hs_raw) + len(dedup_univ_raw))
             k1, k2, k3, k4, k5 = st.columns(5)
             with k1:
                 st.metric("선정 매장", f"{len(selected39):,}")
@@ -2996,7 +3050,7 @@ def main() -> None:
                 """<div style="color:rgba(49,51,63,0.78);font-size:0.96rem;line-height:1.55;margin:0.08rem 0 0.35rem 0;">
 • 정의(1) 취합 매장: 업로드한 매장명을 데이터와 맞춘 결과입니다.<br>
 • 지역(권역): 매장 마스터의 권역이 붙습니다. 엑셀에 권역을 적은 경우에는 일치할 때만 반영됩니다.<br>
-• 우선순위: 같은 권역 안에서는 파일 위에서부터 1, 2, 3… 순입니다(1이 가장 우선).<br>
+• 우선순위: 같은 권역 안에서는 파일 위에서부터 1, 2, 3… 순입니다(1이 가장 우선). **권역당 최대 취합 매장 수는 3곳으로 고정**입니다.<br>
 • 이 표를 기준으로 아래 학교 통합 목록이 계산됩니다.
 </div>""",
                 unsafe_allow_html=True,
@@ -3055,11 +3109,21 @@ def main() -> None:
                         key="campaign_region_filter",
                         disabled=(str(owner_bucket) != "(전체)"),
                     )
-                max_store_n = max(1, int(pd.to_numeric(dedup_df["연관매장수"], errors="coerce").max()))
+                _mx_hs = (
+                    int(pd.to_numeric(dedup_hs_raw["연관매장수"], errors="coerce").max())
+                    if not dedup_hs_raw.empty
+                    else 1
+                )
+                _mx_uv = (
+                    int(pd.to_numeric(dedup_univ_raw["연관매장수"], errors="coerce").max())
+                    if not dedup_univ_raw.empty
+                    else 1
+                )
+                max_store_n = max(1, _mx_hs, _mx_uv)
                 _max_pr = (
                     int(selected39.groupby("campaign_region").size().max())
                     if not selected39.empty
-                    else int(stores_per_team)
+                    else CAMPAIGN_MAX_STORES_PER_REGION
                 )
                 core_v = min(max_store_n, max(1, _max_pr))
                 mid_v = min(max_store_n, max(1, core_v - 1))
@@ -3095,31 +3159,45 @@ def main() -> None:
                     store_n_range = (single_v, single_v)
                 else:
                     store_n_range = (single_v, max_store_n)
-                dedup_view = dedup_df.copy()
-                _sn = pd.to_numeric(dedup_view["연관매장수"], errors="coerce").fillna(0)
-                dedup_view = dedup_view[(_sn >= store_n_range[0]) & (_sn <= store_n_range[1])]
+
                 if owner_bucket != "(전체)":
                     allowed_regions = sorted(bucket_to_regions.get(owner_bucket, set()))
                     if allowed_regions:
-                        pat = "|".join(re.escape(x) for x in allowed_regions)
-                        dedup_view = dedup_view[
-                            dedup_view["관련지역"].astype(str).str.contains(pat, regex=True, na=False)
-                        ]
                         stores_view_filtered = selected39[
                             selected39["campaign_region"].astype(str).isin(allowed_regions)
                         ].copy()
                     else:
-                        dedup_view = dedup_view.iloc[0:0]
                         stores_view_filtered = selected39.iloc[0:0].copy()
                 else:
                     stores_view_filtered = selected39.copy()
                 if r_pick != "(전체)":
-                    dedup_view = dedup_view[
-                        dedup_view["관련지역"].astype(str).str.contains(re.escape(r_pick), regex=True, na=False)
-                    ]
                     stores_view_filtered = stores_view_filtered[
                         stores_view_filtered["campaign_region"].astype(str) == str(r_pick)
                     ].copy()
+
+                def _apply_dedup_quick_filters(dv: pd.DataFrame) -> pd.DataFrame:
+                    if dv.empty:
+                        return dv
+                    x = dv.copy()
+                    _sn = pd.to_numeric(x["연관매장수"], errors="coerce").fillna(0)
+                    x = x[(_sn >= store_n_range[0]) & (_sn <= store_n_range[1])]
+                    if owner_bucket != "(전체)":
+                        allowed_regions = sorted(bucket_to_regions.get(owner_bucket, set()))
+                        if allowed_regions:
+                            pat = "|".join(re.escape(reg) for reg in allowed_regions)
+                            x = x[x["관련지역"].astype(str).str.contains(pat, regex=True, na=False)]
+                        else:
+                            x = x.iloc[0:0]
+                    if r_pick != "(전체)":
+                        x = x[
+                            x["관련지역"]
+                            .astype(str)
+                            .str.contains(re.escape(r_pick), regex=True, na=False)
+                        ]
+                    return x
+
+                dedup_hs_view = _apply_dedup_quick_filters(dedup_hs_raw)
+                dedup_univ_view = _apply_dedup_quick_filters(dedup_univ_raw)
                 stores_show = (
                     stores_view_filtered[["campaign_region", "campaign_rank", "name", "address"]]
                     .rename(
@@ -3179,56 +3257,65 @@ def main() -> None:
                     f"선택 필터 기준(1·2·3순위 매장 합계) {union_priority_store_n:,} / "
                     f"업로드된 전체 매장수 {uploaded_store_n:,}"
                 )
-                st.caption(f"현재 목록 학교 수: {len(dedup_view):,}개")
-                dedup_view_disp = dedup_view.copy()
-                dedup_view_disp["집계기준"] = f"매장별 최근접 상위 {int(campaign_n_near)}개"
+                st.caption(
+                    f"현재 목록 학교 수: {len(dedup_hs_view) + len(dedup_univ_view):,}개 "
+                    "(고등학교·대학교 각각 중복제거 후 합계)"
+                )
 
-                _bucket_order = ["운영1~3", "운영4~6", "운영7~9", "운영10~13"]
+                def _finalize_campaign_dedup_view(dv: pd.DataFrame) -> pd.DataFrame:
+                    if dv.empty:
+                        return dv
+                    out = dv.copy()
+                    out["집계기준"] = f"매장별 최근접 상위 {int(campaign_n_near)}개"
+                    _bucket_order = ["운영1~3", "운영4~6", "운영7~9", "운영10~13"]
 
-                def _resolve_buckets(regions_tuple: object) -> str:
-                    found: set[str] = set()
-                    try:
-                        regions_iter = list(regions_tuple) if regions_tuple else []
-                    except TypeError:
-                        regions_iter = []
-                    for rg in regions_iter:
-                        rg_s = str(rg).strip()
-                        if not rg_s:
-                            continue
-                        for bkt, rgs in bucket_to_regions.items():
-                            if rg_s in rgs:
-                                found.add(bkt)
-                                break
-                    if not found:
-                        return ""
-                    return ", ".join(b for b in _bucket_order if b in found)
+                    def _resolve_buckets(regions_tuple: object) -> str:
+                        found: set[str] = set()
+                        try:
+                            regions_iter = list(regions_tuple) if regions_tuple else []
+                        except TypeError:
+                            regions_iter = []
+                        for rg in regions_iter:
+                            rg_s = str(rg).strip()
+                            if not rg_s:
+                                continue
+                            for bkt, rgs in bucket_to_regions.items():
+                                if rg_s in rgs:
+                                    found.add(bkt)
+                                    break
+                        if not found:
+                            return ""
+                        return ", ".join(b for b in _bucket_order if b in found)
 
-                if "_regions_all" in dedup_view_disp.columns:
-                    dedup_view_disp["운영팀 묶음"] = dedup_view_disp["_regions_all"].map(_resolve_buckets)
-                    dedup_view_disp = dedup_view_disp.drop(columns=["_regions_all"], errors="ignore")
-                else:
-                    dedup_view_disp["운영팀 묶음"] = ""
+                    if "_regions_all" in out.columns:
+                        out["운영팀 묶음"] = out["_regions_all"].map(_resolve_buckets)
+                        out = out.drop(columns=["_regions_all"], errors="ignore")
+                    else:
+                        out["운영팀 묶음"] = ""
 
-                pref_cols = [
-                    "학교명",
-                    "학교유형",
-                    "캠퍼스구분",
-                    "학교주소",
-                    "연관매장수",
-                    "매장목록",
-                    "집계기준",
-                    "최대직선거리(km)",
-                    "관련지역",
-                    "운영팀 묶음",
-                    "담당부서",
-                    "담당자명",
-                    "전화번호",
-                    "이메일",
-                    "취업센터 URL",
-                ]
-                pref_cols = [c for c in pref_cols if c in dedup_view_disp.columns]
-                rest_cols = [c for c in dedup_view_disp.columns if c not in pref_cols]
-                dedup_view_disp = dedup_view_disp[pref_cols + rest_cols]
+                    pref_cols = [
+                        "학교명",
+                        "학교유형",
+                        "캠퍼스구분",
+                        "학교주소",
+                        "연관매장수",
+                        "매장목록",
+                        "집계기준",
+                        "최대직선거리(km)",
+                        "관련지역",
+                        "운영팀 묶음",
+                        "담당부서",
+                        "담당자명",
+                        "전화번호",
+                        "이메일",
+                        "취업센터 URL",
+                    ]
+                    pref_cols = [c for c in pref_cols if c in out.columns]
+                    rest_cols = [c for c in out.columns if c not in pref_cols]
+                    return out[pref_cols + rest_cols]
+
+                hs_base = _finalize_campaign_dedup_view(dedup_hs_view)
+                univ_base = _finalize_campaign_dedup_view(dedup_univ_view)
 
                 _HS_TYPES = {"일반고", "특목고", "특성화고", "자율고"}
                 _UNIV_TYPES = {"4년제", "전문대", "사이버대", "기타대"}
@@ -3241,10 +3328,19 @@ def main() -> None:
                         return "대학교"
                     return "기타"
 
-                _g = dedup_view_disp["학교유형"].map(_school_group)
-                hs_disp = dedup_view_disp[_g == "고등학교"].reset_index(drop=True)
-                univ_disp = dedup_view_disp[_g == "대학교"].reset_index(drop=True)
-                other_disp = dedup_view_disp[_g == "기타"].reset_index(drop=True)
+                def _primary_rows_for_pool(base: pd.DataFrame, want: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+                    """고등 전용·대학 전용 풀에서 표시 행과 그 외(기타·유형불일치)를 분리."""
+                    if base.empty or "학교유형" not in base.columns:
+                        return base.iloc[0:0].copy(), base.iloc[0:0].copy()
+                    _g = base["학교유형"].map(_school_group)
+                    primary = base[_g == want].reset_index(drop=True)
+                    remainder = base[_g != want].reset_index(drop=True)
+                    return primary, remainder
+
+                hs_disp, hs_remain = _primary_rows_for_pool(hs_base, "고등학교")
+                univ_disp, univ_remain = _primary_rows_for_pool(univ_base, "대학교")
+                other_disp = pd.concat([hs_remain, univ_remain], ignore_index=True)
+                dedup_view_disp = pd.concat([hs_disp, univ_disp, other_disp], ignore_index=True)
 
                 _b_dedup = BytesIO()
                 with pd.ExcelWriter(_b_dedup, engine="openpyxl") as _w:
@@ -3286,7 +3382,7 @@ def main() -> None:
                         render_table(other_disp, use_container_width=True, height=240, show_contact=True)
                 st.markdown(
                     f"""<div style="color:rgba(49,51,63,0.78);font-size:0.96rem;line-height:1.55;margin:0.08rem 0 0.35rem 0;">
-• 정의(2) 학교 통합 목록: 취합 매장 전체를 합쳐 중복 학교를 1번만 남긴 목록입니다.<br>
+• 정의(2) 학교 통합 목록: 좌측 «학교 유형»의 **고등(일반·특목·특성화·자율)** 과 **대학(4년제·전문대 등)** 을 서로 다른 학교 풀로 두고, 취합 매장마다 가까운 학교를 잡은 뒤 **고등 풀·대학 풀 각각에서만** 중복 학교를 1번만 남긴 목록입니다.<br>
 • 연관매장수: 해당 학교를 가까운 학교로 포함한 매장 수입니다(현재 매장당 상위 {int(campaign_n_near)}개 기준).<br>
 • 최대직선거리: 연관 매장 중 해당 학교와 가장 먼 매장까지의 직선거리입니다.
 </div>""",
