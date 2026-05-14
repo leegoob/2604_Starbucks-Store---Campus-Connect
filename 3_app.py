@@ -620,12 +620,30 @@ MISS_TIER_DEDUP_EXCEL_COLUMNS: tuple[str, ...] = (
 )
 
 
+def _school_type_lookup_from_pool(pool: pd.DataFrame) -> dict[tuple[str, str], str]:
+    """근접 표 학교명(simplify_school_name 적용) + 주소 키로 정규화된 학교유형을 찾는다."""
+    out: dict[tuple[str, str], str] = {}
+    if pool.empty or "name" not in pool.columns or "school_type" not in pool.columns:
+        return out
+    addr_col = "address" if "address" in pool.columns else None
+    for _, r in pool.iterrows():
+        raw_nm = str(r.get("name", "") or "").strip()
+        if not raw_nm:
+            continue
+        ad = str(r.get(addr_col, "") or "").strip() if addr_col else ""
+        sk = (simplify_school_name(raw_nm), ad)
+        stv = str(r.get("school_type", "") or "").strip()
+        if stv:
+            out[sk] = normalize_school_type_value(stv)
+    return out
+
+
 def miss_tier_grouped_schools_to_dedup_excel_layout(
     miss_disp: pd.DataFrame,
     *,
-    tier_label: str,
     campaign_n_near: int,
     bucket_to_regions: dict[str, set[str]],
+    school_pool: pd.DataFrame,
 ) -> pd.DataFrame:
     """미포함 매장의 근접1~3 학교를 (원문 학교명·주소)로 묶어 «전체» 시트와 동일 열 구성으로 만든다."""
     _basis = f"매장별 최근접 상위 {int(campaign_n_near)}개"
@@ -633,6 +651,7 @@ def miss_tier_grouped_schools_to_dedup_excel_layout(
     empty = pd.DataFrame(columns=list(MISS_TIER_DEDUP_EXCEL_COLUMNS))
     if miss_disp.empty or "매장명" not in miss_disp.columns:
         return empty
+    type_by_key = _school_type_lookup_from_pool(school_pool)
 
     def _bucket_for_region(rg: str) -> str:
         rg_s = str(rg or "").strip()
@@ -695,10 +714,11 @@ def miss_tier_grouped_schools_to_dedup_excel_layout(
             ops_cell = ", ".join(b for b in _bucket_order if b in bset)
         dlist = agg_dists.get(key, [])
         dmax = round(max(dlist), 3) if dlist else float("nan")
+        sch_type = type_by_key.get((nm, addr), "")
         rows.append(
             {
                 "학교명": simplify_school_name(nm),
-                "학교유형": tier_label,
+                "학교유형": sch_type,
                 "캠퍼스구분": "",
                 "학교주소": addr,
                 "연관매장수": len(stores),
@@ -3649,21 +3669,21 @@ def main() -> None:
 
                 miss_t1_xl = miss_tier_grouped_schools_to_dedup_excel_layout(
                     miss_t1_disp,
-                    tier_label="1순위 미포함(근접)",
                     campaign_n_near=campaign_n_near,
                     bucket_to_regions=bucket_to_regions,
+                    school_pool=_combined_nearby_pool,
                 )
                 miss_t2_xl = miss_tier_grouped_schools_to_dedup_excel_layout(
                     miss_t2_disp,
-                    tier_label="2순위 미포함(근접)",
                     campaign_n_near=campaign_n_near,
                     bucket_to_regions=bucket_to_regions,
+                    school_pool=_combined_nearby_pool,
                 )
                 miss_t3_xl = miss_tier_grouped_schools_to_dedup_excel_layout(
                     miss_t3_disp,
-                    tier_label="3순위 미포함(근접)",
                     campaign_n_near=campaign_n_near,
                     bucket_to_regions=bucket_to_regions,
+                    school_pool=_combined_nearby_pool,
                 )
 
                 _dedup_xl = _with_full_region_list_for_excel(
@@ -3769,8 +3789,8 @@ def main() -> None:
                     st.caption("해당 없음.")
                 else:
                     st.caption(
-                        "열 구성은 학교 통합 «전체»와 같습니다. «학교통합목록» 엑셀의 **1순위_미포함** 시트를 "
-                        "«전체» 시트 아래에 붙여 넣어 1순위 반영 학교와 함께 볼 수 있습니다. (행은 근접 학교 단위로 묶음)"
+                        "열 구성은 학교 통합 «전체»와 같습니다. **학교유형**은 고등·대학 합친 풀 마스터의 유형(일반고·전문대·4년제 등)입니다. "
+                        "«학교통합목록» 엑셀의 **1순위_미포함** 시트를 «전체» 시트 아래에 붙여 넣어 함께 볼 수 있습니다. (행은 근접 학교 단위로 묶음)"
                     )
                     if miss_t1_xl.empty:
                         st.info(
@@ -3793,7 +3813,7 @@ def main() -> None:
                     st.caption("해당 없음.")
                 else:
                     st.caption(
-                        "열 구성은 학교 통합 «전체»와 같습니다. **2순위_미포함** 엑셀 시트와 동일합니다."
+                        "열 구성은 학교 통합 «전체»와 같습니다. **학교유형**은 고등·대학 합친 풀 마스터 기준입니다. **2순위_미포함** 엑셀 시트와 동일합니다."
                     )
                     if miss_t2_xl.empty:
                         st.info(
@@ -3816,7 +3836,7 @@ def main() -> None:
                     st.caption("해당 없음.")
                 else:
                     st.caption(
-                        "열 구성은 학교 통합 «전체»와 같습니다. **3순위_미포함** 엑셀 시트와 동일합니다."
+                        "열 구성은 학교 통합 «전체»와 같습니다. **학교유형**은 고등·대학 합친 풀 마스터 기준입니다. **3순위_미포함** 엑셀 시트와 동일합니다."
                     )
                     if miss_t3_xl.empty:
                         st.info(
