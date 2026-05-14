@@ -3788,6 +3788,17 @@ def main() -> None:
                     st.caption("해당 없음.")
                 else:
                     render_table(miss_t2_disp, use_container_width=True, height=200)
+                    _t2_by_sch = summarize_miss_tier_by_nearby_school(miss_t2_disp)
+                    if not _t2_by_sch.empty:
+                        st.caption(
+                            "아래 표는 위 매장들의 근접1~3 학교를 **학교명·주소가 같은 것끼리 묶어**, "
+                            "각 학교 주변에 2순위 미포함으로 잡힌 매장 수와 매장 목록을 보여 줍니다."
+                        )
+                        render_table(
+                            _t2_by_sch,
+                            use_container_width=True,
+                            height=min(320, 80 + len(_t2_by_sch) * 26),
+                        )
                 st.markdown(
                     f"<div style='font-size:0.95rem;font-weight:600;margin:0.75rem 0 0.25rem 0;'>"
                     f"3순위 미포함 매장 ({len(miss_t3_disp):,}곳)</div>",
@@ -3797,6 +3808,17 @@ def main() -> None:
                     st.caption("해당 없음.")
                 else:
                     render_table(miss_t3_disp, use_container_width=True, height=200)
+                    _t3_by_sch = summarize_miss_tier_by_nearby_school(miss_t3_disp)
+                    if not _t3_by_sch.empty:
+                        st.caption(
+                            "아래 표는 위 매장들의 근접1~3 학교를 **학교명·주소가 같은 것끼리 묶어**, "
+                            "각 학교 주변에 3순위 미포함으로 잡힌 매장 수와 매장 목록을 보여 줍니다."
+                        )
+                        render_table(
+                            _t3_by_sch,
+                            use_container_width=True,
+                            height=min(320, 80 + len(_t3_by_sch) * 26),
+                        )
 
                 _b_un = BytesIO()
                 with pd.ExcelWriter(_b_un, engine="openpyxl") as _w:
