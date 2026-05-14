@@ -627,7 +627,7 @@ def miss_stores_df_to_dedup_excel_layout(
     campaign_n_near: int,
     bucket_to_regions: dict[str, set[str]],
 ) -> pd.DataFrame:
-    """미포함 매장 행을 학교 통합 «전체» 시트와 같은 열 구성으로 바꾼다."""
+    """미포함 매장 행을 학교 통합 «전체» 시트와 같은 열 구성으로 바꾼다. 학교명은 근접1~3 학교명(비어 있으면 공란)."""
     _basis = f"매장별 최근접 상위 {int(campaign_n_near)}개"
     _bucket_order = ("운영1~3", "운영4~6", "운영7~9", "운영10~13")
     if miss_df.empty:
@@ -646,9 +646,17 @@ def miss_stores_df_to_dedup_excel_layout(
         mname = str(r.get("매장명", "")).strip()
         cob = str(r.get("담당자묶음", "")).strip() or _bucket_for_region(reg)
         n_link = int(pd.to_numeric(r.get("매칭학교수", 0), errors="coerce") or 0)
+        sch_parts: list[str] = []
+        for j in (1, 2, 3):
+            k = f"근접{j}_학교명"
+            if k in miss_df.columns:
+                sv = str(r.get(k, "") or "").strip()
+                if sv:
+                    sch_parts.append(sv)
+        school_names_cell = " · ".join(sch_parts)
         rows.append(
             {
-                "학교명": mname,
+                "학교명": school_names_cell,
                 "학교유형": tier_label,
                 "캠퍼스구분": "",
                 "학교주소": str(r.get("매장주소", "")).strip(),
@@ -3746,12 +3754,12 @@ def main() -> None:
                             columns=["지역", "우선순위", "매장명", "매장주소", "매칭학교수", "사유"]
                         )
                     _sanitize_table(_u).to_excel(_w, index=False, sheet_name="전체_미반영")
-                    _sanitize_table(miss_t1_xl).to_excel(_w, index=False, sheet_name="1순위_미포함")
-                    _sanitize_table(miss_t2_xl).to_excel(_w, index=False, sheet_name="2순위_미포함")
-                    _sanitize_table(miss_t3_xl).to_excel(_w, index=False, sheet_name="3순위_미포함")
+                    _sanitize_table(miss_t1_base).to_excel(_w, index=False, sheet_name="1순위_미포함")
+                    _sanitize_table(miss_t2_base).to_excel(_w, index=False, sheet_name="2순위_미포함")
+                    _sanitize_table(miss_t3_base).to_excel(_w, index=False, sheet_name="3순위_미포함")
                 _b_un.seek(0)
                 st.download_button(
-                    "엑셀 다운로드 (미반영·1·2·3순위 미포함은 전체 시트 열 구성)",
+                    "엑셀 다운로드 (전체 미반영·1·2·3순위별 시트)",
                     data=_b_un.read(),
                     file_name="summary_3_미반영매장.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
