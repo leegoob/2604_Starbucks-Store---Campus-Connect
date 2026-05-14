@@ -575,11 +575,13 @@ _CORPORATE_CAMPUS_UNIV_NAMES_EXACT: frozenset[str] = frozenset(
         "대우조선해양공과대학",
         "현대중공업공과대학",
         "포스코기술대학",
+        "KDB금융대학교",
     }
 )
 _CORPORATE_CAMPUS_UNIV_NAME_RE = re.compile(
     r"(?:삼성(?:전자|중공업)|대우조선해양|현대중공업|포스코).*(?:공과대학(?:교)?|기술대학)"
 )
+_CORPORATE_CAMPUS_UNIV_NAME_RE_KDB = re.compile(r"^KDB.*(?:대학교|대학)$")
 
 
 def _is_corporate_campus_university_name(name: object) -> bool:
@@ -587,6 +589,8 @@ def _is_corporate_campus_university_name(name: object) -> bool:
     if not n:
         return False
     if n in _CORPORATE_CAMPUS_UNIV_NAMES_EXACT:
+        return True
+    if _CORPORATE_CAMPUS_UNIV_NAME_RE_KDB.search(n):
         return True
     return bool(_CORPORATE_CAMPUS_UNIV_NAME_RE.search(n))
 
@@ -599,6 +603,64 @@ def filter_out_corporate_campus_universities(schools: pd.DataFrame) -> pd.DataFr
     is_univ = keys.isin(_CAMPAIGN_UNIV_FILTER_KEYS)
     corp = schools["name"].map(_is_corporate_campus_university_name)
     return schools[~(is_univ & corp)].copy().reset_index(drop=True)
+
+
+# 산학연계 미포함(1·2·3순위) 엑셀: «전체» 학교통합 시트와 동일 열 순서(붙여넣기 호환)
+MISS_TIER_DEDUP_EXCEL_COLUMNS: tuple[str, ...] = (
+    "학교명",
+    "학교유형",
+    "캠퍼스구분",
+    "학교주소",
+    "연관매장수",
+    "매장목록",
+    "집계기준",
+    "최대직선거리(km)",
+    "관련지역",
+    "운영팀 묶음",
+)
+
+
+def miss_stores_df_to_dedup_excel_layout(
+    miss_df: pd.DataFrame,
+    *,
+    tier_label: str,
+    campaign_n_near: int,
+    bucket_to_regions: dict[str, set[str]],
+) -> pd.DataFrame:
+    """미포함 매장 행을 학교 통합 «전체» 시트와 같은 열 구성으로 바꾼다."""
+    _basis = f"매장별 최근접 상위 {int(campaign_n_near)}개"
+    _bucket_order = ("운영1~3", "운영4~6", "운영7~9", "운영10~13")
+    if miss_df.empty:
+        return pd.DataFrame(columns=list(MISS_TIER_DEDUP_EXCEL_COLUMNS))
+
+    def _bucket_for_region(rg: str) -> str:
+        rg_s = str(rg or "").strip()
+        if not rg_s:
+            return ""
+        found = [b for b in _bucket_order if rg_s in bucket_to_regions.get(b, set())]
+        return ", ".join(found)
+
+    rows: list[dict[str, object]] = []
+    for _, r in miss_df.iterrows():
+        reg = str(r.get("지역", "")).strip()
+        mname = str(r.get("매장명", "")).strip()
+        cob = str(r.get("담당자묶음", "")).strip() or _bucket_for_region(reg)
+        n_link = int(pd.to_numeric(r.get("매칭학교수", 0), errors="coerce") or 0)
+        rows.append(
+            {
+                "학교명": mname,
+                "학교유형": tier_label,
+                "캠퍼스구분": "",
+                "학교주소": str(r.get("매장주소", "")).strip(),
+                "연관매장수": n_link,
+                "매장목록": mname,
+                "집계기준": _basis,
+                "최대직선거리(km)": np.nan,
+                "관련지역": reg,
+                "운영팀 묶음": cob,
+            }
+        )
+    return pd.DataFrame(rows, columns=list(MISS_TIER_DEDUP_EXCEL_COLUMNS))
 
 
 def campaign_school_pools_for_summary(
@@ -2257,7 +2319,7 @@ def main() -> None:
     st.caption(
         "내부 분석용 · 데이터 `processed_data.csv` · 좌측 필터는 전 탭에 동일 적용 · "
         "엑셀 업로드(매장 특성·산학연계)는 각각 해당 영역에서만 · "
-        "기업 부속 공과·기술대(예: 삼성·대우조선해양·현대중공업·포스코)는 학교 목록에서 제외됩니다."
+        "기업 부속 공과·기술대·KDB금융대 등(예: 삼성·대우조선해양·현대중공업·포스코)는 학교 목록에서 제외됩니다."
     )
     stores_base = apply_store_tags(stores_from_csv.copy())
     if stores_base.empty:
@@ -3535,6 +3597,25 @@ def main() -> None:
                     miss_t3_base, selected39, _combined_nearby_pool, n_take=3
                 )
 
+                miss_t1_xl = miss_stores_df_to_dedup_excel_layout(
+                    miss_t1_disp,
+                    tier_label="1순위 미포함 매장",
+                    campaign_n_near=campaign_n_near,
+                    bucket_to_regions=bucket_to_regions,
+                )
+                miss_t2_xl = miss_stores_df_to_dedup_excel_layout(
+                    miss_t2_disp,
+                    tier_label="2순위 미포함 매장",
+                    campaign_n_near=campaign_n_near,
+                    bucket_to_regions=bucket_to_regions,
+                )
+                miss_t3_xl = miss_stores_df_to_dedup_excel_layout(
+                    miss_t3_disp,
+                    tier_label="3순위 미포함 매장",
+                    campaign_n_near=campaign_n_near,
+                    bucket_to_regions=bucket_to_regions,
+                )
+
                 _dedup_xl = _with_full_region_list_for_excel(
                     _with_full_store_list_for_excel(dedup_view_disp, _excel_dedup_store_map),
                     _excel_dedup_region_map,
@@ -3567,12 +3648,12 @@ def main() -> None:
                             columns=["지역", "우선순위", "매장명", "매장주소", "매칭학교수", "사유"]
                         )
                     _sanitize_table(_u_xl).to_excel(_w, index=False, sheet_name="전체_미반영")
-                    _sanitize_table(miss_t1_disp).to_excel(_w, index=False, sheet_name="1순위_미포함")
-                    _sanitize_table(miss_t2_disp).to_excel(_w, index=False, sheet_name="2순위_미포함")
-                    _sanitize_table(miss_t3_disp).to_excel(_w, index=False, sheet_name="3순위_미포함")
+                    _sanitize_table(miss_t1_xl).to_excel(_w, index=False, sheet_name="1순위_미포함")
+                    _sanitize_table(miss_t2_xl).to_excel(_w, index=False, sheet_name="2순위_미포함")
+                    _sanitize_table(miss_t3_xl).to_excel(_w, index=False, sheet_name="3순위_미포함")
                 _b_dedup.seek(0)
                 st.download_button(
-                    "엑셀 다운로드 (통합·고등·대학·미반영·순위별근접)",
+                    "엑셀 다운로드 (통합·고등·대학·미반영·순위별미포함·전체열)",
                     data=_b_dedup.read(),
                     file_name="summary_2_학교통합목록.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3665,12 +3746,12 @@ def main() -> None:
                             columns=["지역", "우선순위", "매장명", "매장주소", "매칭학교수", "사유"]
                         )
                     _sanitize_table(_u).to_excel(_w, index=False, sheet_name="전체_미반영")
-                    _sanitize_table(miss_t1_base).to_excel(_w, index=False, sheet_name="1순위_미포함")
-                    _sanitize_table(miss_t2_base).to_excel(_w, index=False, sheet_name="2순위_미포함")
-                    _sanitize_table(miss_t3_base).to_excel(_w, index=False, sheet_name="3순위_미포함")
+                    _sanitize_table(miss_t1_xl).to_excel(_w, index=False, sheet_name="1순위_미포함")
+                    _sanitize_table(miss_t2_xl).to_excel(_w, index=False, sheet_name="2순위_미포함")
+                    _sanitize_table(miss_t3_xl).to_excel(_w, index=False, sheet_name="3순위_미포함")
                 _b_un.seek(0)
                 st.download_button(
-                    "엑셀 다운로드 (전체 미반영·1·2·3순위별 시트)",
+                    "엑셀 다운로드 (미반영·1·2·3순위 미포함은 전체 시트 열 구성)",
                     data=_b_un.read(),
                     file_name="summary_3_미반영매장.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
