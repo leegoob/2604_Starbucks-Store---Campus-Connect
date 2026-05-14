@@ -984,18 +984,20 @@ def _cached_batch_neighbors(
     )
 
 
-def augment_miss_stores_with_nearby5(
+def augment_miss_stores_with_nearby_schools(
     miss_df: pd.DataFrame,
     selected39: pd.DataFrame,
     pool: pd.DataFrame,
-    n_near: int,
+    *,
+    n_take: int = 3,
 ) -> pd.DataFrame:
-    """미포함 매장 행에 고등·대학 풀을 합친 학교 목록에서 직선거리 가까운 학교 n곳(최대 5) 학교명·주소 열을 붙인다."""
-    n_take = min(5, max(1, int(n_near)))
+    """미포함 매장 행에 고등·대학 풀을 합친 학교 목록에서 직선거리 가까운 학교 n곳 학교명·주소·직선거리(km) 열을 붙인다."""
+    k = max(1, min(int(n_take), 50))
     mm = miss_df.copy().reset_index(drop=True)
-    for j in range(1, 6):
+    for j in range(1, k + 1):
         mm[f"근접{j}_학교명"] = ""
         mm[f"근접{j}_주소"] = ""
+        mm[f"근접{j}_직선거리(km)"] = np.nan
     if mm.empty:
         return mm
     if (
@@ -1017,8 +1019,8 @@ def augment_miss_stores_with_nearby5(
         return mm.drop(columns=["latitude", "longitude"], errors="ignore")
     sw = mm.loc[valid, ["latitude", "longitude"]].reset_index(drop=True)
     pos = np.flatnonzero(valid.to_numpy())
-    top_idx, top_dist, sub = _cached_batch_neighbors(sw, pool2, n_take)
-    ncol = min(5, top_idx.shape[1])
+    top_idx, top_dist, sub = _cached_batch_neighbors(sw, pool2, k)
+    ncol = min(k, top_idx.shape[1])
     for r in range(len(sw)):
         row_i = int(pos[r])
         for j in range(ncol):
@@ -1031,6 +1033,7 @@ def augment_miss_stores_with_nearby5(
                 sch.get("name", "")
             )
             mm.iat[row_i, mm.columns.get_loc(f"근접{j + 1}_주소")] = str(sch.get("address", "") or "")
+            mm.iat[row_i, mm.columns.get_loc(f"근접{j + 1}_직선거리(km)")] = round(dkm, 3)
     return mm.drop(columns=["latitude", "longitude"], errors="ignore")
 
 
@@ -1477,6 +1480,24 @@ def _team_sort_key(s: str) -> tuple[int, int, str]:
     if m:
         return (0, int(m.group(1)), t)
     return (1, 10**9, t)
+
+
+def _ops_team_bucket_label(ops_team: object) -> str:
+    """운영팀 문자열을 «운영1~3» 등 담당자 묶음 레이블로. 매칭 없으면 빈 문자열."""
+    ot = str(ops_team or "").strip()
+    m = re.search(r"운영\s*(\d+)", _team_key(ot))
+    if not m:
+        return ""
+    no = int(m.group(1))
+    if 1 <= no <= 3:
+        return "운영1~3"
+    if 4 <= no <= 6:
+        return "운영4~6"
+    if 7 <= no <= 9:
+        return "운영7~9"
+    if 10 <= no <= 13:
+        return "운영10~13"
+    return ""
 
 
 def _region_key(s: str) -> str:
@@ -3373,14 +3394,24 @@ def main() -> None:
 
                 def _tier_miss_stores_df(names_with_tier: set[str], reason: str) -> pd.DataFrame:
                     """해당 순위 조건 학교가 근접 후보에 없는 매장만."""
+                    empty_cols = [
+                        "담당자묶음",
+                        "지역",
+                        "우선순위",
+                        "매장명",
+                        "매장주소",
+                        "매칭학교수",
+                        "사유",
+                    ]
                     m = ~stores_view_filtered["name"].astype(str).str.strip().isin(names_with_tier)
-                    sub = stores_view_filtered.loc[
-                        m, ["campaign_region", "campaign_rank", "name", "address"]
-                    ].copy()
+                    _pick = ["campaign_region", "campaign_rank", "name", "address"]
+                    if "ops_team" in stores_view_filtered.columns:
+                        _pick = ["ops_team"] + _pick
+                    sub = stores_view_filtered.loc[m, _pick].copy()
+                    if "ops_team" not in sub.columns:
+                        sub["ops_team"] = ""
                     if sub.empty:
-                        return pd.DataFrame(
-                            columns=["지역", "우선순위", "매장명", "매장주소", "매칭학교수", "사유"]
-                        )
+                        return pd.DataFrame(columns=empty_cols)
                     out = sub.rename(
                         columns={
                             "campaign_region": "지역",
@@ -3388,7 +3419,11 @@ def main() -> None:
                             "name": "매장명",
                             "address": "매장주소",
                         }
-                    ).sort_values(["지역", "우선순위", "매장명"]).reset_index(drop=True)
+                    )
+                    _bkt = out["ops_team"].map(_ops_team_bucket_label)
+                    out = out.drop(columns=["ops_team"], errors="ignore")
+                    out.insert(0, "담당자묶음", _bkt)
+                    out = out.sort_values(["담당자묶음", "지역", "우선순위", "매장명"]).reset_index(drop=True)
                     out["매칭학교수"] = out["매장명"].map(
                         lambda x: int(store_school_counts.get(str(x).strip(), 0))
                     )
@@ -3410,14 +3445,14 @@ def main() -> None:
                     _combined_nearby_pool = _combined_nearby_pool.drop_duplicates(
                         subset=["name", "address"], keep="first"
                     )
-                miss_t1_disp = augment_miss_stores_with_nearby5(
-                    miss_t1_base, selected39, _combined_nearby_pool, campaign_n_near
+                miss_t1_disp = augment_miss_stores_with_nearby_schools(
+                    miss_t1_base, selected39, _combined_nearby_pool, n_take=3
                 )
-                miss_t2_disp = augment_miss_stores_with_nearby5(
-                    miss_t2_base, selected39, _combined_nearby_pool, campaign_n_near
+                miss_t2_disp = augment_miss_stores_with_nearby_schools(
+                    miss_t2_base, selected39, _combined_nearby_pool, n_take=3
                 )
-                miss_t3_disp = augment_miss_stores_with_nearby5(
-                    miss_t3_base, selected39, _combined_nearby_pool, campaign_n_near
+                miss_t3_disp = augment_miss_stores_with_nearby_schools(
+                    miss_t3_base, selected39, _combined_nearby_pool, n_take=3
                 )
 
                 _full_stores_map = _campaign_full_store_list_by_school(exec_hs, exec_univ)
@@ -3495,7 +3530,7 @@ def main() -> None:
                     "(고등·대학 풀을 합친 실행표와 동일한 연관매장수 기준입니다.)"
                 )
                 st.caption(
-                    "아래 «N순위 미포함» 표의 근접1~5 열은 고등·대학 풀을 합친 학교만 두고, 직선거리 가까운 순으로 뽑은 학교명·주소입니다."
+                    "아래 «N순위 미포함» 표의 근접1~3 열은 고등·대학 풀을 합친 학교만 두고, 직선거리 가까운 순으로 뽑은 학교명·주소·직선거리(km)입니다."
                 )
                 if unlinked_df.empty:
                     st.success("현재 지역/담당자 조건에서 모든 매장이 1·2·3순위 중 하나에는 반영되었습니다.")
