@@ -18,13 +18,7 @@ OUT = BASE / "processed_data.csv"
 CHECKPOINT = BASE / "processed_data.checkpoint.csv"
 USER_AGENT = "starbucks_school_finder_edu_demo/1.0"
 
-SCHOOL_EXTRA_COLS = (
-    "campus_kind",
-    "contact_office",
-    "contact_name",
-    "contact_phone",
-    "contact_email",
-)
+SCHOOL_EXTRA_COLS = ("campus_kind",)
 STORE_EXTRA_COLS = ("ops_team", "store_region")
 
 PROCESSED_COLUMN_ORDER = [
@@ -37,10 +31,6 @@ PROCESSED_COLUMN_ORDER = [
     "ops_team",
     "store_region",
     "campus_kind",
-    "contact_office",
-    "contact_name",
-    "contact_phone",
-    "contact_email",
 ]
 
 

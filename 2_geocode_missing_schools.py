@@ -50,19 +50,9 @@ PROCESSED_COLUMN_ORDER = [
     "ops_team",
     "store_region",
     "campus_kind",
-    "contact_office",
-    "contact_name",
-    "contact_phone",
-    "contact_email",
 ]
 
-SCHOOL_EXTRA_COLS = (
-    "campus_kind",
-    "contact_office",
-    "contact_name",
-    "contact_phone",
-    "contact_email",
-)
+SCHOOL_EXTRA_COLS = ("campus_kind",)
 
 
 def load_rest_key() -> str:

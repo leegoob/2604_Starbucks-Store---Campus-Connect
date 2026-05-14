@@ -57,10 +57,6 @@ PROCESSED_COLUMN_ORDER = [
     "ops_team",
     "store_region",
     "campus_kind",
-    "contact_office",
-    "contact_name",
-    "contact_phone",
-    "contact_email",
 ]
 
 STORE_RENAME = {
@@ -355,10 +351,6 @@ def main() -> None:
             "ops_team": r["ops_team"],
             "store_region": r["store_region"],
             "campus_kind": "",
-            "contact_office": "",
-            "contact_name": "",
-            "contact_phone": "",
-            "contact_email": "",
         })
 
     school_rows = proc[proc["entity_type"] == "school"]

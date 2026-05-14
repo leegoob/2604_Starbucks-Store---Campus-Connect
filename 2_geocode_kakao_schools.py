@@ -32,13 +32,7 @@ OUT_ALT = BASE / "processed_data_kakao_output.csv"
 ADDRESS_URL = "https://dapi.kakao.com/v2/local/search/address.json"
 KEYWORD_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 
-SCHOOL_EXTRA_COLS = (
-    "campus_kind",
-    "contact_office",
-    "contact_name",
-    "contact_phone",
-    "contact_email",
-)
+SCHOOL_EXTRA_COLS = ("campus_kind",)
 STORE_EXTRA_COLS = ("ops_team", "store_region")
 
 PROCESSED_COLUMN_ORDER = [
@@ -51,10 +45,6 @@ PROCESSED_COLUMN_ORDER = [
     "ops_team",
     "store_region",
     "campus_kind",
-    "contact_office",
-    "contact_name",
-    "contact_phone",
-    "contact_email",
 ]
 
 

@@ -8,7 +8,7 @@
 필수 열 이름(1행 헤더):
   stores:  매장명, 주소
   schools: 학교명, 학교구분, 주소 (필수)
-         우측에 선택: 담당부서, 담당자명, 전화번호, 이메일 등 — 엑셀_형식_안내.txt 참고
+         우측에 선택: 캠퍼스구분 등 — 엑셀_형식_안내.txt 참고
 
 실행: python import_excel_to_csv.py
 다음: python 2_geocode.py
@@ -54,12 +54,6 @@ SCHOOL_RENAME = {
 SCHOOL_OPTIONAL_RENAME = {
     "캠퍼스구분": "campus_kind",
     "캠퍼스 구분": "campus_kind",
-    "담당부서": "contact_office",
-    "부서명": "contact_office",
-    "취업진로부서": "contact_office",
-    "담당자명": "contact_name",
-    "전화번호": "contact_phone",
-    "이메일": "contact_email",
 }
 
 
