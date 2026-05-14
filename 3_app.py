@@ -3303,6 +3303,41 @@ def main() -> None:
                         "1·2·3순위 기준(연관매장수) 밖",
                     )
                 st.markdown("##### 3) 미반영 매장 점검")
+                _store_names_scope = (
+                    stores_view_filtered["name"].astype(str).str.strip().unique().tolist()
+                )
+                _n_scope = len(_store_names_scope)
+                if not exec_linked.empty:
+                    _el_sn = exec_linked.assign(_sn=_sn_exec)
+                    _in_t1 = set(
+                        _el_sn.loc[_el_sn["_sn"] >= int(core_v), "매장명"]
+                        .astype(str)
+                        .str.strip()
+                    )
+                    _in_t2 = set(
+                        _el_sn.loc[_el_sn["_sn"] == int(mid_v), "매장명"]
+                        .astype(str)
+                        .str.strip()
+                    )
+                    _in_t3 = set(
+                        _el_sn.loc[_el_sn["_sn"] == int(single_v), "매장명"]
+                        .astype(str)
+                        .str.strip()
+                    )
+                else:
+                    _in_t1 = set()
+                    _in_t2 = set()
+                    _in_t3 = set()
+                _miss_t1 = sum(1 for nm in _store_names_scope if nm not in _in_t1)
+                _miss_t2 = sum(1 for nm in _store_names_scope if nm not in _in_t2)
+                _miss_t3 = sum(1 for nm in _store_names_scope if nm not in _in_t3)
+                st.caption(
+                    f"지역/담당자 조건 반영 매장 {_n_scope:,}곳 기준 — "
+                    f"1순위(연관매장수 {int(core_v):,}개 이상) 조건을 만족하는 학교가 근접 후보에 없는 매장 {_miss_t1:,}곳 · "
+                    f"2순위(연관매장수 {int(mid_v):,}개) 조건을 만족하는 학교가 근접 후보에 없는 매장 {_miss_t2:,}곳 · "
+                    f"3순위(연관매장수 {int(single_v):,}개) 조건을 만족하는 학교가 근접 후보에 없는 매장 {_miss_t3:,}곳 "
+                    "(고등·대학 풀을 합친 실행표와 동일한 연관매장수 기준입니다.)"
+                )
                 if unlinked_df.empty:
                     st.success("현재 지역/담당자 조건에서 모든 매장이 1·2·3순위 중 하나에는 반영되었습니다.")
                 else:
