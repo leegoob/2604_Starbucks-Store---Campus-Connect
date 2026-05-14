@@ -1704,6 +1704,39 @@ def build_school_dedup_table(exec_df: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values(["연관매장수", "최대직선거리(km)", "학교명"], ascending=[False, True, True]).reset_index(drop=True)
 
 
+def _campaign_full_store_list_by_school(
+    exec_hs: pd.DataFrame, exec_univ: pd.DataFrame
+) -> dict[tuple[str, str], str]:
+    """학교(명+주소)별 연관 매장 전체를 ' · '로 이은 문자열. 엑셀 매장목록 컬럼용."""
+    parts = [df for df in (exec_hs, exec_univ) if not df.empty and "매장명" in df.columns]
+    if not parts:
+        return {}
+    work = pd.concat(parts, ignore_index=True)
+    if "학교주소" not in work.columns:
+        work["학교주소"] = ""
+    work["학교명"] = work["학교명"].astype(str).str.strip()
+    work["학교주소"] = work["학교주소"].astype(str).str.strip()
+    out: dict[tuple[str, str], str] = {}
+    for (sn, sa), grp in work.groupby(["학교명", "학교주소"], sort=False):
+        stores = sorted({str(x).strip() for x in grp["매장명"].tolist() if str(x).strip()})
+        out[(str(sn), str(sa))] = " · ".join(stores)
+    return out
+
+
+def _with_full_store_list_for_excel(
+    df: pd.DataFrame, school_to_stores: dict[tuple[str, str], str]
+) -> pd.DataFrame:
+    if df.empty or "매장목록" not in df.columns:
+        return df
+    out = df.copy()
+    k1 = out["학교명"].astype(str).str.strip()
+    k2 = out["학교주소"].astype(str).str.strip()
+    prev = out["매장목록"].tolist()
+    keys = zip(k1, k2)
+    out["매장목록"] = [school_to_stores.get(k, prev[i]) for i, k in enumerate(keys)]
+    return out
+
+
 def kakao_map_html(
     center_lat: float,
     center_lng: float,
@@ -3025,14 +3058,9 @@ def main() -> None:
                     elif 10 <= no <= 13:
                         bucket_to_regions["운영10~13"].add(rg)
 
-                # 두 필터는 동시 적용 의미가 겹치므로 하나만 선택 가능하도록 제어
-                _owner_prev = str(st.session_state.get("campaign_owner_bucket_filter", "(전체)"))
-                _region_prev = str(st.session_state.get("campaign_region_filter", "(전체)"))
-                if _owner_prev != "(전체)" and _region_prev != "(전체)":
-                    st.session_state["campaign_region_filter"] = "(전체)"
-                    _region_prev = "(전체)"
-
-                r_opts = ["(전체)"] + sorted({str(x).strip() for x in selected39["campaign_region"].tolist() if str(x).strip()})
+                _all_regions = sorted(
+                    {str(x).strip() for x in selected39["campaign_region"].tolist() if str(x).strip()}
+                )
                 _flt_l, _flt_r = st.columns(2, gap="medium")
                 with _flt_l:
                     owner_bucket = st.selectbox(
@@ -3040,16 +3068,23 @@ def main() -> None:
                         options=["(전체)", "운영1~3", "운영4~6", "운영7~9", "운영10~13"],
                         index=0,
                         key="campaign_owner_bucket_filter",
-                        help="담당 운영팀 묶음 기준으로 해당 지역 학교만 추려볼 수 있습니다.",
-                        disabled=(_region_prev != "(전체)"),
+                        help="담당 운영팀 묶음으로 먼저 범위를 줄인 뒤, 우측에서 그 안의 지역을 고를 수 있습니다.",
                     )
+                _bucket_regs = (
+                    sorted(bucket_to_regions.get(str(owner_bucket), set()))
+                    if str(owner_bucket) != "(전체)"
+                    else _all_regions
+                )
+                r_opts = ["(전체)"] + _bucket_regs
+                _reg_key = "campaign_region_filter"
+                if str(st.session_state.get(_reg_key, "(전체)")) not in r_opts:
+                    st.session_state[_reg_key] = "(전체)"
                 with _flt_r:
                     r_pick = st.selectbox(
-                        "지역 필터 (권역 담당자 묶음이 '(전체)'일 때 선택 가능)",
+                        "지역 필터 (묶음 내 지역)",
                         options=r_opts,
-                        index=0,
-                        key="campaign_region_filter",
-                        disabled=(str(owner_bucket) != "(전체)"),
+                        key=_reg_key,
+                        help="권역 담당자 묶음이 «전체»이면 전체 업로드 지역 중에서, 묶음을 고르면 해당 운영팀에 속한 지역만 선택할 수 있습니다. 하단 표·미반영 점검은 두 필터를 함께 반영합니다.",
                     )
                 _mx_hs = (
                     int(pd.to_numeric(dedup_hs_raw["연관매장수"], errors="coerce").max())
@@ -3385,15 +3420,21 @@ def main() -> None:
                     miss_t3_base, selected39, _combined_nearby_pool, campaign_n_near
                 )
 
+                _full_stores_map = _campaign_full_store_list_by_school(exec_hs, exec_univ)
+                _dedup_xl = _with_full_store_list_for_excel(dedup_view_disp, _full_stores_map)
+                _hs_xl = _with_full_store_list_for_excel(hs_disp, _full_stores_map)
+                _univ_xl = _with_full_store_list_for_excel(univ_disp, _full_stores_map)
+                _other_xl = _with_full_store_list_for_excel(other_disp, _full_stores_map)
+
                 _b_dedup = BytesIO()
                 with pd.ExcelWriter(_b_dedup, engine="openpyxl") as _w:
-                    _sanitize_table(dedup_view_disp).to_excel(_w, index=False, sheet_name="전체")
-                    if not hs_disp.empty:
-                        _sanitize_table(hs_disp).to_excel(_w, index=False, sheet_name="고등학교")
-                    if not univ_disp.empty:
-                        _sanitize_table(univ_disp).to_excel(_w, index=False, sheet_name="대학교")
-                    if not other_disp.empty:
-                        _sanitize_table(other_disp).to_excel(_w, index=False, sheet_name="기타")
+                    _sanitize_table(_dedup_xl).to_excel(_w, index=False, sheet_name="전체")
+                    if not _hs_xl.empty:
+                        _sanitize_table(_hs_xl).to_excel(_w, index=False, sheet_name="고등학교")
+                    if not _univ_xl.empty:
+                        _sanitize_table(_univ_xl).to_excel(_w, index=False, sheet_name="대학교")
+                    if not _other_xl.empty:
+                        _sanitize_table(_other_xl).to_excel(_w, index=False, sheet_name="기타")
                     _u_xl = unlinked_df.copy()
                     if _u_xl.empty:
                         _u_xl = pd.DataFrame(
