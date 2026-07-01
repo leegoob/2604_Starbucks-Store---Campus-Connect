@@ -22,6 +22,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from geocode_utils import resolve_store_coords_kakao
+
 BASE = Path(__file__).resolve().parent
 RAW_STORES = BASE / "raw_stores.csv"
 RAW_SCHOOLS = BASE / "raw_schools.csv"
@@ -161,18 +163,8 @@ def resolve_store_coords(
     address: str,
     pause: float,
 ) -> tuple[float | None, float | None]:
-    lat, lon = geocode_address(session, headers, address)
-    if lat is not None and lon is not None:
-        return lat, lon
-    time.sleep(pause)
-    lat, lon = geocode_keyword(session, headers, name)
-    if lat is not None and lon is not None:
-        return lat, lon
-    time.sleep(pause)
-    short = _normalize_addr(address)[:40]
-    if short and short != _normalize_addr(address):
-        return geocode_address(session, headers, short)
-    return None, None
+    lat, lon, _ = resolve_store_coords_kakao(session, headers, name, address, pause)
+    return lat, lon
 
 
 def resolve_school_coords(

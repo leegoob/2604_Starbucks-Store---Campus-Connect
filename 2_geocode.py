@@ -11,6 +11,8 @@ import pandas as pd
 from geopy.exc import GeocoderRateLimited, GeocoderTimedOut, GeocoderUnavailable
 from geopy.geocoders import Nominatim
 
+from geocode_utils import store_geocode_query_variants
+
 BASE = Path(__file__).resolve().parent
 RAW_STORES = BASE / "raw_stores.csv"
 RAW_SCHOOLS = BASE / "raw_schools.csv"
@@ -53,6 +55,14 @@ def geocode_one(geolocator: Nominatim, address: str) -> tuple[float | None, floa
             time.sleep(wait)
         except (GeocoderTimedOut, GeocoderUnavailable):
             time.sleep(1.0 + attempt * 0.5)
+    return None, None
+
+
+def geocode_store_one(geolocator: Nominatim, name: str, address: str) -> tuple[float | None, float | None]:
+    for q in store_geocode_query_variants(name, address):
+        lat, lon = geocode_one(geolocator, q)
+        if lat is not None and lon is not None:
+            return lat, lon
     return None, None
 
 
@@ -233,7 +243,7 @@ def main() -> None:
             addr = str(r["address"]).strip()
             if (not stores_only) and (not schools_only) and (name, addr) in cp_store_done:
                 continue
-            lat, lon = geocode_one(geolocator, addr)
+            lat, lon = geocode_store_one(geolocator, name, addr)
             row = {
                 "entity_type": "store",
                 "name": name,
