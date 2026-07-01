@@ -159,7 +159,7 @@ def load_kakao_rest_key() -> str:
 
 @st.cache_data(show_spinner=False)
 def _load_app_meta_toml() -> dict[str, str]:
-    """Git에 포함된 app_meta.toml — 배포 환경에서 secrets 없을 때 기준일 폴백."""
+    """Git에 포함된 app_meta.toml — 데이터 갱신일·기준일의 기준 소스."""
     path = BASE / "app_meta.toml"
     if not path.is_file():
         return {}
@@ -170,6 +170,38 @@ def _load_app_meta_toml() -> dict[str, str]:
         return {str(k): str(v).strip() for k, v in raw.items() if v is not None}
     except Exception:
         return {}
+
+
+def _read_secret_value(key: str) -> str:
+    """st.secrets만 조회(평면·[섹션] 중첩). API 키·제작자명 등 비날짜 설정용."""
+    try:
+        if key in st.secrets:
+            v = str(st.secrets[key]).strip()
+            if v:
+                return v
+        for sect in ("secrets", "general", "app", "streamlit"):
+            if sect in st.secrets and key in st.secrets[sect]:
+                v = str(st.secrets[sect][key]).strip()
+                if v:
+                    return v
+    except Exception:
+        pass
+    return ""
+
+
+def _resolve_date_value(key: str, default: str = "") -> str:
+    """기준일·갱신일: app_meta.toml(Git) 우선 → secrets 폴백.
+
+    Cloud secrets에 예전 2026-05-11 등이 남아 있어도 Git의 app_meta.toml이 이깁니다.
+    """
+    meta = _load_app_meta_toml()
+    v = str(meta.get(key, "")).strip()
+    if v:
+        return v
+    sec = _read_secret_value(key)
+    if sec:
+        return sec
+    return default
 
 
 def _fmt_ref_date(s: str) -> str:
@@ -187,19 +219,10 @@ def _fmt_ref_date(s: str) -> str:
 
 
 def _resolve_config_value(key: str, default: str = "") -> str:
-    """st.secrets(평면·[섹션] 중첩) → app_meta.toml 순으로 설정값 조회."""
-    try:
-        if key in st.secrets:
-            v = str(st.secrets[key]).strip()
-            if v:
-                return v
-        for sect in ("secrets", "general", "app", "streamlit"):
-            if sect in st.secrets and key in st.secrets[sect]:
-                v = str(st.secrets[sect][key]).strip()
-                if v:
-                    return v
-    except Exception:
-        pass
+    """st.secrets(평면·[섹션] 중첩) → app_meta.toml 순. 비날짜 설정용."""
+    sec = _read_secret_value(key)
+    if sec:
+        return sec
     meta = _load_app_meta_toml()
     return str(meta.get(key, default) or default).strip()
 
@@ -2359,7 +2382,7 @@ def main() -> None:
     )
 
     credit_line = _resolve_config_value("app_credit")
-    last_updated_raw = _resolve_config_value("app_last_updated")
+    last_updated_raw = _resolve_date_value("app_last_updated")
     last_updated = _fmt_ref_date(last_updated_raw) or last_updated_raw
     if credit_line or last_updated:
         _cred_style = "font-size:0.98rem;font-weight:450;color:#3f3f3f;"
@@ -2400,8 +2423,8 @@ def main() -> None:
     except Exception:
         kakao_secret = ""
 
-    store_ref = _resolve_config_value("store_reference_date")
-    school_ref = _resolve_config_value("school_reference_date")
+    store_ref = _resolve_date_value("store_reference_date", "2026-06-22")
+    school_ref = _resolve_date_value("school_reference_date", "2024-10-07")
 
     store_ref_disp = _fmt_ref_date(store_ref)
     school_ref_disp = _fmt_ref_date(school_ref) or "24.10.7"
