@@ -157,6 +157,53 @@ def load_kakao_rest_key() -> str:
         return ""
 
 
+@st.cache_data(show_spinner=False)
+def _load_app_meta_toml() -> dict[str, str]:
+    """Git에 포함된 app_meta.toml — 배포 환경에서 secrets 없을 때 기준일 폴백."""
+    path = BASE / "app_meta.toml"
+    if not path.is_file():
+        return {}
+    try:
+        import tomllib
+
+        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+        return {str(k): str(v).strip() for k, v in raw.items() if v is not None}
+    except Exception:
+        return {}
+
+
+def _fmt_ref_date(s: str) -> str:
+    """'2026-06-22' → '26.6.22'. 형식이 다르면 원문 그대로."""
+    s = (s or "").strip()
+    if not s:
+        return ""
+    try:
+        from datetime import datetime
+
+        d = datetime.strptime(s, "%Y-%m-%d")
+        return f"{d.year % 100}.{d.month}.{d.day}"
+    except Exception:
+        return s
+
+
+def _resolve_config_value(key: str, default: str = "") -> str:
+    """st.secrets(평면·[섹션] 중첩) → app_meta.toml 순으로 설정값 조회."""
+    try:
+        if key in st.secrets:
+            v = str(st.secrets[key]).strip()
+            if v:
+                return v
+        for sect in ("secrets", "general", "app", "streamlit"):
+            if sect in st.secrets and key in st.secrets[sect]:
+                v = str(st.secrets[sect][key]).strip()
+                if v:
+                    return v
+    except Exception:
+        pass
+    meta = _load_app_meta_toml()
+    return str(meta.get(key, default) or default).strip()
+
+
 def _normalize_addr_app(s: str) -> str:
     s = str(s or "").strip()
     if s.lower() in ("nan", "none", ""):
@@ -2311,15 +2358,9 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    credit_line = ""
-    last_updated = ""
-    try:
-        if "app_credit" in st.secrets:
-            credit_line = str(st.secrets["app_credit"]).strip()
-        if "app_last_updated" in st.secrets:
-            last_updated = str(st.secrets["app_last_updated"]).strip()
-    except Exception:
-        pass
+    credit_line = _resolve_config_value("app_credit")
+    last_updated_raw = _resolve_config_value("app_last_updated")
+    last_updated = _fmt_ref_date(last_updated_raw) or last_updated_raw
     if credit_line or last_updated:
         _cred_style = "font-size:0.98rem;font-weight:450;color:#3f3f3f;"
         if credit_line and last_updated:
@@ -2359,29 +2400,10 @@ def main() -> None:
     except Exception:
         kakao_secret = ""
 
-    store_ref = ""
-    school_ref = ""
-    try:
-        if "store_reference_date" in st.secrets:
-            store_ref = str(st.secrets["store_reference_date"]).strip()
-        if "school_reference_date" in st.secrets:
-            school_ref = str(st.secrets["school_reference_date"]).strip()
-    except Exception:
-        pass
+    store_ref = _resolve_config_value("store_reference_date")
+    school_ref = _resolve_config_value("school_reference_date")
 
-    def _fmt_ref_date(s: str) -> str:
-        """'2026-05-11' → '26.5.11'. 형식이 다르면 원문 그대로."""
-        s = (s or "").strip()
-        if not s:
-            return ""
-        try:
-            from datetime import datetime
-            d = datetime.strptime(s, "%Y-%m-%d")
-            return f"{d.year % 100}.{d.month}.{d.day}"
-        except Exception:
-            return s
-
-    store_ref_disp = _fmt_ref_date(store_ref) or "26.5.11"
+    store_ref_disp = _fmt_ref_date(store_ref)
     school_ref_disp = _fmt_ref_date(school_ref) or "24.10.7"
 
     src = "csv"
